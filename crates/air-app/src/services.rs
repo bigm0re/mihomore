@@ -1323,7 +1323,7 @@ function override(_, config) {
             Some("core.common.config.yaml")
         );
         let document = services.core_config_store.load_user_config().unwrap();
-        assert_eq!(document.typed.global.mixed_port, Some(9870));
+        assert_eq!(document.typed.global.mixed_port, Some(7890));
     }
 
     #[test]

@@ -129,7 +129,7 @@ config/core.common.config.yaml
 config/core.runtime.config.yaml
 ```
 
-`CoreConfigStore::ensure_user_config_exists()` 会在用户配置缺失时写入内置默认配置。默认配置包含 `mixed-port: 9870`、`external-controller: 127.0.0.1:9090`、DNS、TUN、sniffer、geo 更新间隔和空代理/规则列表。
+`CoreConfigStore::ensure_user_config_exists()` 会在用户配置缺失时写入内置默认配置。默认配置包含 `mixed-port: 7890`、`external-controller: 127.0.0.1:9090`、DNS、TUN、sniffer、geo 更新间隔和空代理/规则列表。
 
 保存流程：
 

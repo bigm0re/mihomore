@@ -14,7 +14,7 @@ use super::{AppPaths, FileStore};
 pub const CORE_COMMON_CONFIG_PATH: &str = "core.common.config.yaml";
 pub const CORE_RUNTIME_CONFIG_PATH: &str = "core.runtime.config.yaml";
 
-const DEFAULT_CORE_CONFIG: &str = r#"mixed-port: 9870
+const DEFAULT_CORE_CONFIG: &str = r#"mixed-port: 7890
 external-controller: 127.0.0.1:9090
 dns:
   enable: true
@@ -320,7 +320,7 @@ mod tests {
 
         let source =
             fs::read_to_string(temp.path().join("config/core.common.config.yaml")).unwrap();
-        assert!(source.contains("mixed-port: 9870"));
+        assert!(source.contains("mixed-port: 7890"));
         assert!(source.contains("listen: 0.0.0.0:1053"));
         assert!(source.contains("geo-update-interval: 24"));
         assert!(!source.contains("null"));
@@ -441,7 +441,7 @@ mod tests {
 
         let document = store.ensure_user_config_exists().unwrap();
 
-        assert_eq!(document.typed.global.mixed_port, Some(9870));
+        assert_eq!(document.typed.global.mixed_port, Some(7890));
         assert_eq!(
             document.typed.global.external_controller.as_deref(),
             Some("127.0.0.1:9090")

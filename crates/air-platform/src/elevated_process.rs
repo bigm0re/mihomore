@@ -208,7 +208,7 @@ fn run_elevated_core_helper(config: ElevatedCoreHelperConfig) -> AppResult<()> {
     append_helper_log(
         config.console_log_path.as_deref(),
         "stdout",
-        "air elevated helper starting mihomo",
+        "mihomore elevated helper starting mihomo",
     );
     let mut command = Command::new(&config.program);
     command
@@ -252,7 +252,7 @@ fn run_elevated_core_helper(config: ElevatedCoreHelperConfig) -> AppResult<()> {
         config.console_log_path.as_deref(),
         "stdout",
         &format!(
-            "air elevated helper observed mihomo exit: {:?}",
+            "mihomore elevated helper observed mihomo exit: {:?}",
             status.code()
         ),
     );

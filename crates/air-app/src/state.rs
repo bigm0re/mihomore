@@ -1,9 +1,10 @@
 use std::sync::{Arc, RwLock};
 
-use air_app::events::{AppEvent, AppSnapshot, RuntimeStatus};
+use air_app::events::{AppEvent, AppSnapshot, NetworkProbeSnapshot, RuntimeStatus};
 use air_app::runtime::AppRuntime;
 use air_mihomo::MihomoRuntimeInfo;
 use air_platform::core_service::CoreServiceSnapshot;
+use air_platform::system_proxy::SystemProxyState;
 use air_telemetry::redaction::redact_log_value;
 
 #[derive(Clone)]
@@ -88,6 +89,27 @@ impl AppStateStore {
 
     pub fn set_core_service(&self, service: CoreServiceSnapshot) -> bool {
         self.update_snapshot(|current| current.core_service = service)
+    }
+
+    pub fn set_system_proxy(&self, state: SystemProxyState) -> bool {
+        // 系统代理状态是仪表盘开关的权威投影；变化时单独发事件，避免页面依赖快照全量对比。
+        let changed = self.update_snapshot(|current| current.system_proxy = state.clone());
+        if changed {
+            self.runtime.emit(AppEvent::SystemProxyStateChanged(state));
+        }
+        changed
+    }
+
+    pub fn set_network_probe(&self, probe: NetworkProbeSnapshot) -> bool {
+        let changed = self.update_snapshot(|current| current.network = probe.clone());
+        if changed {
+            self.runtime.emit(AppEvent::NetworkProbeCompleted(probe));
+        }
+        changed
+    }
+
+    pub fn set_core_running_since(&self, since_unix: Option<i64>) -> bool {
+        self.update_snapshot(|current| current.core_running_since_unix = since_unix)
     }
 
     pub fn set_last_error(&self, message: impl AsRef<str>) -> bool {

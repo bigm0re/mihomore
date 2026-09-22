@@ -129,7 +129,11 @@ extern "system" fn service_main(argc: u32, argv: *mut *mut u16) {
     let exit_code = match run_service_worker(handle, owner_pid) {
         Ok(()) => 0,
         Err(error) => {
-            append_service_log(None, "stderr", &format!("air core service failed: {error}"));
+            append_service_log(
+                None,
+                "stderr",
+                &format!("mihomore core service failed: {error}"),
+            );
             1
         }
     };
@@ -197,7 +201,7 @@ fn run_service_worker(
     append_service_log(
         Some(&log_path),
         "stdout",
-        "air core service starting mihomo",
+        "mihomore core service starting mihomo",
     );
     let mut command = Command::new(&binary_path);
     command
@@ -274,7 +278,7 @@ fn run_service_worker(
                 Some(&log_path),
                 "stdout",
                 &format!(
-                    "air core service observed mihomo exit during managed runtime: {:?}",
+                    "mihomore core service observed mihomo exit during managed runtime: {:?}",
                     status.code()
                 ),
             );
@@ -319,7 +323,7 @@ fn spawn_owner_process_monitor(owner_pid: u32, log_path: PathBuf) -> std::thread
         append_service_log(
             Some(&log_path),
             "stdout",
-            &format!("air core service tracking GUI owner pid {owner_pid}"),
+            &format!("mihomore core service tracking GUI owner pid {owner_pid}"),
         );
         let owner = unsafe { OpenProcess(PROCESS_SYNCHRONIZE, 0, owner_pid) };
         if owner.is_null() {

@@ -12,6 +12,7 @@ mod config;
 mod connections;
 mod context;
 mod core;
+mod dashboard;
 mod monitoring;
 mod proxy;
 mod rules;
@@ -149,6 +150,13 @@ async fn execute_command(
         }
         AppCommand::StopTrafficMonitoring => {
             monitoring::handle_stop_traffic_monitoring(&context).await
+        }
+        AppCommand::SetSystemProxyEnabled { enabled } => {
+            dashboard::handle_set_system_proxy_enabled(&context, enabled).await
+        }
+        AppCommand::RefreshSystemProxy => dashboard::handle_refresh_system_proxy(&context).await,
+        AppCommand::ProbeDashboardNetwork => {
+            dashboard::handle_probe_dashboard_network(&context).await
         }
         AppCommand::StartConnectionsMonitoring => {
             monitoring::handle_start_connections_monitoring(&context).await

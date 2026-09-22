@@ -15,6 +15,11 @@ pub struct AppSettings {
     pub silent_start: bool,
     pub override_script_enabled: bool,
     pub proxy_delay_test_url: String,
+    /// 用户希望的系统代理开关意图。
+    ///
+    /// 注意：真实生效状态以 `SystemProxyState`（注册表投影）为准，本字段只用于
+    /// 「启动时是否自动接管系统代理」和设置页持久化，不能当作当前状态展示。
+    pub system_proxy_enabled: bool,
     pub close_window_behavior: CloseWindowBehavior,
     pub window: WindowSettings,
 }
@@ -30,6 +35,7 @@ impl Default for AppSettings {
             silent_start: false,
             override_script_enabled: false,
             proxy_delay_test_url: DEFAULT_PROXY_DELAY_TEST_URL.to_string(),
+            system_proxy_enabled: false,
             close_window_behavior: CloseWindowBehavior::Exit,
             window: WindowSettings::default(),
         }
@@ -146,6 +152,7 @@ impl<'de> Deserialize<'de> for AppSettings {
             silent_start: Option<bool>,
             override_script_enabled: bool,
             proxy_delay_test_url: String,
+            system_proxy_enabled: bool,
             close_window_behavior: CloseWindowBehavior,
             window: WindowSettings,
         }
@@ -162,6 +169,7 @@ impl<'de> Deserialize<'de> for AppSettings {
                     silent_start: None,
                     override_script_enabled: defaults.override_script_enabled,
                     proxy_delay_test_url: defaults.proxy_delay_test_url,
+                    system_proxy_enabled: defaults.system_proxy_enabled,
                     close_window_behavior: defaults.close_window_behavior,
                     window: defaults.window,
                 }
@@ -180,6 +188,7 @@ impl<'de> Deserialize<'de> for AppSettings {
             silent_start: compat.silent_start.unwrap_or(legacy_silent),
             override_script_enabled: compat.override_script_enabled,
             proxy_delay_test_url: compat.proxy_delay_test_url,
+            system_proxy_enabled: compat.system_proxy_enabled,
             close_window_behavior: compat.close_window_behavior,
             window: compat.window,
         })
@@ -268,6 +277,7 @@ mod tests {
         assert!(!settings.autostart);
         assert!(!settings.silent_start);
         assert!(!settings.override_script_enabled);
+        assert!(!settings.system_proxy_enabled);
         assert_eq!(settings.proxy_delay_test_url, DEFAULT_PROXY_DELAY_TEST_URL);
         assert_eq!(settings.close_window_behavior, CloseWindowBehavior::Exit);
     }

@@ -4,9 +4,10 @@
 # Bundled mihomo and geodata archives downloaded by build.rs
 /mihomo/
 
-# Local application state and user data
+# Local application state and user data (portable mode keeps these next to the exe)
 /config/
 /data/
+/cache/
 /logs/
 /diagnostics/
 *.log

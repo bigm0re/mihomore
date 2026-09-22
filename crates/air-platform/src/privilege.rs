@@ -5,9 +5,9 @@ use air_error::{AppResult, PlatformError};
 #[cfg(windows)]
 use std::ffi::OsStr;
 
-pub const ELEVATED_CORE_START_ARG: &str = "--air-start-core-after-elevation";
-pub const ELEVATED_APP_START_ARG: &str = "--air-elevated-app-start";
-pub const ELEVATED_CORE_HELPER_ARG: &str = "--air-elevated-core-helper";
+pub const ELEVATED_CORE_START_ARG: &str = "--mihomore-start-core-after-elevation";
+pub const ELEVATED_APP_START_ARG: &str = "--mihomore-elevated-app-start";
+pub const ELEVATED_CORE_HELPER_ARG: &str = "--mihomore-elevated-core-helper";
 
 pub fn elevated_core_start_requested() -> bool {
     std::env::args().any(|arg| arg == ELEVATED_CORE_START_ARG)

@@ -3,6 +3,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
+use air_app::events::{NetworkProbeSnapshot, PublicAddressProbe};
 use air_app::{
     AppEvent, AppNotificationLevel, AppRuntime, AppSnapshot, AppStateStore, RuntimeStatus,
 };
@@ -20,6 +21,7 @@ use air_mihomo::{
     ProcessLaunchConfig, RuntimeDetectionOptions,
 };
 use air_platform::core_service::{self, CoreServicePaths, CoreServiceSnapshot};
+use air_platform::system_proxy::SystemProxyState;
 use air_settings::AppSettings;
 use air_storage::{
     AppPaths, CoreConfigStore, OverrideScriptStore, SettingsStore, SubscriptionStore,
@@ -28,6 +30,14 @@ use air_telemetry::redaction::redact_log_value;
 
 pub type AppMihomoService =
     MihomoService<MihomoRuntimeDetector, MihomoProcessManager, MihomoHttpClient>;
+
+/// 用户配置缺失 `mixed-port` 时使用的回退端口，与内置默认配置保持一致。
+pub const DEFAULT_MIXED_PORT: u16 = 7890;
+
+/// 公网地址探测的超时时间。
+///
+/// 探测失败只影响仪表盘单张卡片，超时必须足够短，避免按钮看起来“卡住”。
+const NETWORK_PROBE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
 
 #[derive(Clone)]
 pub struct AppServices {
@@ -40,6 +50,8 @@ pub struct AppServices {
     pub mihomo: Arc<AppMihomoService>,
     pub mihomo_clients: MihomoClientFactory,
     pub snapshots: AppStateStore,
+    /// 仪表盘公网地址探测专用客户端；单独持有以固定超时，避免影响业务 API 客户端。
+    network_probe_client: reqwest::Client,
     shutdown_stop_started: Arc<AtomicBool>,
 }
 
@@ -93,7 +105,7 @@ impl AppServices {
             "app services initialized"
         );
 
-        Ok(Self {
+        let services = Self {
             runtime: Arc::clone(&runtime),
             paths: paths.clone(),
             settings_store: Arc::clone(&settings_store),
@@ -105,10 +117,21 @@ impl AppServices {
             // AppSnapshot 是 UI 的只读投影；真实业务状态仍由 app/service/domain 持有。
             // 所有投影字段统一经 AppStateStore 写入，避免页面或服务各自散落修改。
             snapshots: AppStateStore::new(Arc::clone(&runtime), initial_snapshot),
+            network_probe_client: reqwest::Client::builder()
+                .timeout(NETWORK_PROBE_TIMEOUT)
+                .build()
+                .unwrap_or_else(|error| {
+                    // 客户端构造失败不应阻断应用启动；降级为默认客户端，探测失败会在卡片上提示。
+                    tracing::warn!(%error, "failed to build network probe client; using default");
+                    reqwest::Client::new()
+                }),
             shutdown_stop_started: Arc::new(AtomicBool::new(false)),
-        })
+        };
+        // 启动时先同步一次系统代理真实状态，使仪表盘开关首屏就是权威值；
+        // 若用户上次开启了代理但内核尚未启动，reconcile 会先把代理回收，避免断网。
+        services.reconcile_system_proxy_with_core();
+        Ok(services)
     }
-
     pub fn load_settings(&self) -> AppResult<AppSettings> {
         tracing::info!("loading app settings from settings store");
         self.settings_store.load()
@@ -294,6 +317,156 @@ impl AppServices {
         self.snapshots.set_controller_addr(Some(endpoint.base_url));
     }
 
+    /// 当前用户配置里 mihomo 的混合代理端口。
+    ///
+    /// 系统代理必须指向内核实际监听的端口，否则打开开关后所有流量都会断掉；
+    /// 因此这里以用户配置的 `mixed-port` 为准，缺省时回退到内置默认值。
+    pub fn configured_mixed_port(&self) -> u16 {
+        let port = self
+            .core_config_store
+            .load_user_config()
+            .ok()
+            .and_then(|document| document.typed.global.mixed_port);
+        match port.and_then(|value| u16::try_from(value).ok()) {
+            Some(port) => port,
+            None => {
+                tracing::warn!("user config has no usable mixed-port; using default 7890");
+                DEFAULT_MIXED_PORT
+            }
+        }
+    }
+
+    /// 期望写入系统代理的地址。
+    pub fn desired_system_proxy_server(&self) -> String {
+        air_platform::system_proxy::loopback_proxy_server(self.configured_mixed_port())
+    }
+
+    /// 从操作系统读取系统代理状态并写入快照。
+    pub fn refresh_system_proxy_projection(&self) -> AppResult<SystemProxyState> {
+        let state = air_platform::system_proxy::read_system_proxy()?;
+        tracing::info!(
+            supported = state.supported,
+            enabled = state.enabled,
+            server = %state.server,
+            "refreshed system proxy projection"
+        );
+        self.snapshots.set_system_proxy(state.clone());
+        Ok(state)
+    }
+
+    /// 写入系统代理开关。
+    ///
+    /// 开启时指向当前内核端口；关闭时只回收本程序写入的地址，遇到其它程序配置的
+    /// 代理则直接报错，避免误关用户自己设置的代理。
+    pub fn apply_system_proxy(&self, enabled: bool) -> AppResult<SystemProxyState> {
+        // 单元测试绝不能改写开发机真实的系统代理注册表：
+        // `AppServices::with_paths` 被大量测试调用，一旦写入会静默破坏开发环境网络。
+        #[cfg(test)]
+        {
+            let server = if enabled {
+                self.desired_system_proxy_server()
+            } else {
+                String::new()
+            };
+            // 测试中不连真实代理端口，把健康状态留 None 以免误报。
+            let state = SystemProxyState {
+                supported: true,
+                enabled,
+                server,
+                port_alive: None,
+            };
+            tracing::info!(enabled, "test build: skipping real system proxy write");
+            self.snapshots.set_system_proxy(state.clone());
+            return Ok(state);
+        }
+
+        #[cfg(not(test))]
+        {
+            let desired = self.desired_system_proxy_server();
+            if !enabled {
+                let current = air_platform::system_proxy::read_system_proxy()?;
+                match air_platform::system_proxy::classify_proxy_ownership(
+                    &current.server,
+                    &desired,
+                ) {
+                    air_platform::system_proxy::ProxyOwnership::Owned
+                    | air_platform::system_proxy::ProxyOwnership::Empty => {}
+                    air_platform::system_proxy::ProxyOwnership::Foreign => {
+                        // 用户自己配的代理不能被本程序关掉；保留现状并告知原因。
+                        return Err(air_error::PlatformError::OperationFailed(format!(
+                            "当前系统代理指向 {}，不是本程序写入的地址，已跳过关闭",
+                            current.server
+                        ))
+                        .into());
+                    }
+                }
+            }
+            let state = air_platform::system_proxy::write_system_proxy(enabled, &desired)?;
+            self.snapshots.set_system_proxy(state.clone());
+            // 用户意图需要持久化，使下次启动能恢复接管系统代理。
+            let mut settings = self.load_settings()?;
+            if settings.system_proxy_enabled != enabled {
+                settings.system_proxy_enabled = enabled;
+                self.save_settings(&settings)?;
+            }
+            Ok(state)
+        }
+    }
+
+    /// 探测仪表盘网络信息：内网 IP 与公网 IPv4/IPv6。
+    pub async fn probe_dashboard_network(&self) -> NetworkProbeSnapshot {
+        let local_ip = air_platform::process::local_ipv4_address();
+        let ipv4 = self.probe_public_address(false).await;
+        let ipv6 = self.probe_public_address(true).await;
+        let checked_at_unix = time::OffsetDateTime::now_utc().unix_timestamp();
+        let probe = NetworkProbeSnapshot {
+            local_ip,
+            ipv4,
+            ipv6,
+            checked_at_unix: Some(checked_at_unix),
+        };
+        tracing::info!(
+            local_ip = probe.local_ip.as_deref().unwrap_or("unknown"),
+            ipv4 = probe.ipv4.address.as_deref().unwrap_or("unknown"),
+            ipv6 = probe.ipv6.address.as_deref().unwrap_or("unknown"),
+            "dashboard network probe completed"
+        );
+        self.snapshots.set_network_probe(probe.clone());
+        probe
+    }
+
+    /// 探测单个公网地址族。
+    ///
+    /// 这里使用轻量的纯文本回显服务；失败只影响该地址族卡片，不影响内网 IP 与
+    /// 另一个地址族，因此不向上返回错误。
+    async fn probe_public_address(&self, ipv6: bool) -> PublicAddressProbe {
+        let url = if ipv6 {
+            "https://ipv6.icanhazip.com/"
+        } else {
+            "https://ipv4.icanhazip.com/"
+        };
+        let response = match self.network_probe_client.get(url).send().await {
+            Ok(response) => response,
+            Err(error) => {
+                return PublicAddressProbe::failed(redact_log_value(&error.to_string()));
+            }
+        };
+        if !response.status().is_success() {
+            return PublicAddressProbe::failed(format!("HTTP {}", response.status().as_u16()));
+        }
+        match response.text().await {
+            Ok(text) => {
+                let address = text.trim();
+                if address.is_empty() {
+                    PublicAddressProbe::failed("探测服务返回空地址")
+                } else {
+                    PublicAddressProbe::resolved(address)
+                }
+            }
+            Err(error) => PublicAddressProbe::failed(redact_log_value(&error.to_string())),
+        }
+    }
+
     pub fn emit_notification(&self, level: AppNotificationLevel, message: impl Into<String>) {
         let message = message.into();
         tracing::info!(level = ?level, message = %redact_log_value(&message), "emitting user notification");
@@ -425,8 +598,99 @@ impl AppServices {
             "applying mihomo status to snapshot"
         );
         let runtime_status = runtime_status_from_mihomo(&status);
+        let was_running = matches!(self.snapshots.snapshot().runtime, RuntimeStatus::Running);
+        let now_running = matches!(runtime_status, RuntimeStatus::Running);
         self.snapshots
             .set_runtime_projection(runtime_status, status.runtime, status.last_error);
+        // 仪表盘按钮需要展示"本次运行了多久"，因此在进入 Running 时记录起点，
+        // 离开 Running 时清空，避免停止后继续显示残留时长。
+        match (was_running, now_running) {
+            (false, true) => {
+                let started_at = time::OffsetDateTime::now_utc().unix_timestamp();
+                tracing::info!(started_at, "recording core start timestamp for dashboard");
+                self.snapshots.set_core_running_since(Some(started_at));
+            }
+            (true, false) => {
+                self.snapshots.set_core_running_since(None);
+            }
+            _ => {}
+        }
+        // 内核状态变化必须联动系统代理：指向已停止内核的代理会让整机断网。
+        self.reconcile_system_proxy_with_core();
+    }
+
+    /// 根据内核运行状态校正系统代理，避免出现"代理开着但内核没跑"的断网状态。
+    ///
+    /// 规则：
+    ///
+    /// - 内核不在运行，且系统代理指向本程序端口 → 回收代理（保留用户的其它代理配置）。
+    /// - 内核已运行，且用户之前开启过系统代理 → 重新接管，使重启后仍保持一致。
+    ///
+    /// 失败只记录日志，不能阻断核心启停主流程。
+    pub fn reconcile_system_proxy_with_core(&self) {
+        // 同上：测试构建不触碰真实系统代理。
+        #[cfg(test)]
+        {
+            return;
+        }
+
+        #[cfg(not(test))]
+        {
+            let running = matches!(self.snapshots.snapshot().runtime, RuntimeStatus::Running);
+            let desired = self.desired_system_proxy_server();
+            let current = match air_platform::system_proxy::read_system_proxy() {
+                Ok(current) => current,
+                Err(error) => {
+                    tracing::warn!(
+                        error = %redact_log_value(&error.to_string()),
+                        "failed to read system proxy while reconciling with core state"
+                    );
+                    return;
+                }
+            };
+            let owned = matches!(
+                air_platform::system_proxy::classify_proxy_ownership(&current.server, &desired),
+                air_platform::system_proxy::ProxyOwnership::Owned
+            );
+
+            if running {
+                let intent_enabled = self
+                    .load_settings()
+                    .map(|settings| settings.system_proxy_enabled)
+                    .unwrap_or(false);
+                if intent_enabled && !current.enabled {
+                    tracing::info!(
+                        "core is running and system proxy intent is on; re-applying proxy"
+                    );
+                    if let Err(error) = self.apply_system_proxy(true) {
+                        tracing::warn!(
+                            error = %redact_log_value(&error.to_string()),
+                            "failed to re-apply system proxy after core start"
+                        );
+                    }
+                }
+                return;
+            }
+
+            if current.enabled && owned {
+                tracing::info!(
+                    "core is not running; recycling system proxy to keep networking usable"
+                );
+                // 这里直接写注册表而不走 apply_system_proxy，避免把用户意图改成 false；
+                // 意图保留后，下次启动内核会自动重新接管。
+                match air_platform::system_proxy::write_system_proxy(false, &desired) {
+                    Ok(state) => {
+                        self.snapshots.set_system_proxy(state);
+                    }
+                    Err(error) => {
+                        tracing::warn!(
+                            error = %redact_log_value(&error.to_string()),
+                            "failed to recycle system proxy after core stop"
+                        );
+                    }
+                }
+            }
+        }
     }
 
     fn apply_core_config_projection(&self) {
@@ -775,6 +1039,44 @@ mod tests {
         assert!(document_enables_tun(&enabled));
         assert!(!document_enables_tun(&disabled));
         assert!(!document_enables_tun(&absent));
+    }
+
+    #[test]
+    fn configured_mixed_port_falls_back_to_default_when_absent() {
+        let temp = tempfile::tempdir().unwrap();
+        let paths = AppPaths::from_base_dirs(
+            &temp.path().join("config"),
+            &temp.path().join("data"),
+            &temp.path().join("cache"),
+        );
+        let services = AppServices::with_paths(paths).unwrap();
+        // 默认内置配置包含 mixed-port；先验证它被正确读出。
+        let port = services.configured_mixed_port();
+        assert!(port > 0, "mixed port should be a valid u16");
+        // 系统代理地址必须指向回环地址，避免把代理端口暴露到局域网。
+        assert_eq!(
+            services.desired_system_proxy_server(),
+            format!("127.0.0.1:{port}")
+        );
+    }
+
+    #[test]
+    fn configured_mixed_port_tracks_user_config_changes() {
+        let temp = tempfile::tempdir().unwrap();
+        let paths = AppPaths::from_base_dirs(
+            &temp.path().join("config"),
+            &temp.path().join("data"),
+            &temp.path().join("cache"),
+        );
+        let services = AppServices::with_paths(paths).unwrap();
+
+        services
+            .save_current_config("mixed-port: 17890\nexternal-controller: 127.0.0.1:9090\n")
+            .unwrap();
+
+        // 系统代理必须跟随用户配置的端口，否则开启后会指向没有监听的端口。
+        assert_eq!(services.configured_mixed_port(), 17890);
+        assert_eq!(services.desired_system_proxy_server(), "127.0.0.1:17890");
     }
 
     #[test]

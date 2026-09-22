@@ -22,7 +22,7 @@ impl AppRuntime {
     pub fn new() -> AppResult<Self> {
         let runtime = Builder::new_multi_thread()
             .enable_all()
-            .thread_name("air-bg")
+            .thread_name("mihomore-bg")
             .build()
             .map_err(|error| RuntimeError::Initialization(error.to_string()))?;
         let (events, _) = broadcast::channel(128);

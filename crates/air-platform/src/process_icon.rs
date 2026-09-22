@@ -62,7 +62,7 @@ mod windows {
             .hash(&mut hasher);
         let file_name = format!("{:016x}-{ICON_SIZE}.png", hasher.finish());
         std::env::temp_dir()
-            .join("air")
+            .join("mihomore")
             .join("process-icons")
             .join(file_name)
     }

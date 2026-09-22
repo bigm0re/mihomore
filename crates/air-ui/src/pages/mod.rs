@@ -1,5 +1,6 @@
 pub mod config_editor;
 pub mod connections;
+pub mod dashboard;
 pub mod monitor;
 pub mod override_script;
 pub mod proxy_groups;

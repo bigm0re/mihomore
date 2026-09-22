@@ -10,7 +10,7 @@ use air_error::{AppResult, PlatformError};
 use air_telemetry::redaction::redact_log_value;
 
 const SINGLE_INSTANCE_ADDR: &str = "127.0.0.1:47683";
-const SHOW_WINDOW_REQUEST: &[u8] = b"air.show-window.v1\n";
+const SHOW_WINDOW_REQUEST: &[u8] = b"mihomore.show-window.v1\n";
 const IPC_TIMEOUT: Duration = Duration::from_millis(600);
 
 #[derive(Debug)]
@@ -62,7 +62,7 @@ fn spawn_single_instance_listener(
     sender: mpsc::Sender<SingleInstanceEvent>,
 ) {
     thread::Builder::new()
-        .name("air-single-instance".to_string())
+        .name("mihomore-single-instance".to_string())
         .spawn(move || {
             for stream in listener.incoming() {
                 match stream {
@@ -109,7 +109,9 @@ fn notify_existing_instance() -> AppResult<()> {
         ))
     })?;
     let mut stream = TcpStream::connect_timeout(&addr, IPC_TIMEOUT).map_err(|error| {
-        PlatformError::OperationFailed(format!("Air 已在运行，但无法通知已有窗口恢复: {error}"))
+        PlatformError::OperationFailed(format!(
+            "mihomore 已在运行，但无法通知已有窗口恢复: {error}"
+        ))
     })?;
     stream
         .set_write_timeout(Some(IPC_TIMEOUT))
@@ -119,7 +121,7 @@ fn notify_existing_instance() -> AppResult<()> {
     stream.write_all(SHOW_WINDOW_REQUEST).map_err(|error| {
         PlatformError::OperationFailed(format!("无法发送已有窗口恢复请求: {error}"))
     })?;
-    tracing::info!("existing Air instance notified to show window");
+    tracing::info!("existing mihomore instance notified to show window");
     Ok(())
 }
 
@@ -135,8 +137,8 @@ mod tests {
 
     #[test]
     fn show_window_request_matches_exact_protocol_line() {
-        assert!(is_show_window_request(b"air.show-window.v1\n"));
-        assert!(is_show_window_request(b"air.show-window.v1\r\n"));
-        assert!(!is_show_window_request(b"air.show-window.v2\n"));
+        assert!(is_show_window_request(b"mihomore.show-window.v1\n"));
+        assert!(is_show_window_request(b"mihomore.show-window.v1\r\n"));
+        assert!(!is_show_window_request(b"mihomore.show-window.v2\n"));
     }
 }

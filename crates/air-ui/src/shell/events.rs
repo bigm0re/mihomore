@@ -74,6 +74,24 @@ pub(super) fn apply_app_event_to_state(
             subscriptions.apply_projection(projection);
             ShellAppEventEffect::Redraw
         }
+        // 仪表盘系统代理与网络检测是操作系统级投影，直接更新全局快照；
+        // 页面从快照读取，不再单独维护影子状态。
+        AppEvent::SystemProxyStateChanged(state) => {
+            if snapshot.system_proxy == state {
+                ShellAppEventEffect::None
+            } else {
+                snapshot.system_proxy = state;
+                ShellAppEventEffect::Redraw
+            }
+        }
+        AppEvent::NetworkProbeCompleted(probe) => {
+            if snapshot.network == probe {
+                ShellAppEventEffect::None
+            } else {
+                snapshot.network = probe;
+                ShellAppEventEffect::Redraw
+            }
+        }
         AppEvent::SubscriptionYamlLoaded {
             subscription_id,
             contents,
@@ -211,6 +229,30 @@ pub(super) fn apply_app_event_to_active_state(
                 ShellAppEventEffect::None
             }
         }
+        // 系统代理与网络检测只影响仪表盘卡片，但快照本身是全局投影，
+        // 因此无论当前路由都写入快照，仅在仪表盘激活时触发重绘。
+        AppEvent::SystemProxyStateChanged(state) => {
+            let changed = snapshot.system_proxy != state;
+            if changed {
+                snapshot.system_proxy = state;
+            }
+            if changed && active_route == AppRoute::Dashboard {
+                ShellAppEventEffect::Redraw
+            } else {
+                ShellAppEventEffect::None
+            }
+        }
+        AppEvent::NetworkProbeCompleted(probe) => {
+            let changed = snapshot.network != probe;
+            if changed {
+                snapshot.network = probe;
+            }
+            if changed && active_route == AppRoute::Dashboard {
+                ShellAppEventEffect::Redraw
+            } else {
+                ShellAppEventEffect::None
+            }
+        }
         AppEvent::SubscriptionYamlLoaded {
             subscription_id,
             contents,
@@ -276,6 +318,8 @@ pub(super) fn apply_app_event_to_global_state(
         | AppEvent::ProxyGroupDelayMeasured { .. }
         | AppEvent::SubscriptionStateChanged(_)
         | AppEvent::SubscriptionYamlLoaded { .. }
+        | AppEvent::SystemProxyStateChanged(_)
+        | AppEvent::NetworkProbeCompleted(_)
         | AppEvent::SubscriptionUpdateCanceled { .. } => ShellAppEventEffect::None,
     }
 }

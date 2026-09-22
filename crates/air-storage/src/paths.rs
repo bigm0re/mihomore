@@ -1,8 +1,7 @@
 use std::path::{Path, PathBuf};
 
-use directories::ProjectDirs;
-
 use air_error::{AppResult, StorageError};
+use air_paths::{AppDirRoots, PathMode};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct AppPaths {
@@ -13,20 +12,29 @@ pub struct AppPaths {
     pub cores_dir: PathBuf,
     pub logs_dir: PathBuf,
     pub backups_dir: PathBuf,
+    /// 目录来源，用于日志和诊断区分便携模式与系统回退。
+    pub mode: PathMode,
 }
 
 impl AppPaths {
     pub fn resolve() -> AppResult<Self> {
-        let dirs =
-            ProjectDirs::from("org.air", "", "Air").ok_or(StorageError::ProjectDirsUnavailable)?;
-        let paths = Self::from_base_dirs(dirs.config_dir(), dirs.data_dir(), dirs.cache_dir());
+        // 目录解析集中在 air-paths：便携优先，不可写时回退系统目录。
+        let roots = AppDirRoots::resolve()?;
+        let paths = Self::from_roots(roots);
         tracing::info!(
+            mode = paths.mode.label(),
             config_dir = %paths.config_dir.display(),
             data_dir = %paths.data_dir.display(),
             cache_dir = %paths.cache_dir.display(),
             "resolved application paths"
         );
         Ok(paths)
+    }
+
+    pub fn from_roots(roots: AppDirRoots) -> Self {
+        let mut paths = Self::from_base_dirs(&roots.config_dir, &roots.data_dir, &roots.cache_dir);
+        paths.mode = roots.mode;
+        paths
     }
 
     pub fn from_base_dirs(config_dir: &Path, data_dir: &Path, cache_dir: &Path) -> Self {
@@ -39,7 +47,12 @@ impl AppPaths {
             cores_dir: cache_dir.join("core"),
             logs_dir: data_dir.join("logs"),
             backups_dir: data_dir.join("backups"),
+            mode: PathMode::System,
         }
+    }
+
+    pub fn is_portable(&self) -> bool {
+        self.mode.is_portable()
     }
 
     pub fn init(&self) -> AppResult<()> {
@@ -67,17 +80,27 @@ mod tests {
     #[test]
     fn derives_semantic_subdirectories_from_platform_roots() {
         let paths = AppPaths::from_base_dirs(
-            Path::new("/config/air"),
-            Path::new("/data/air"),
-            Path::new("/cache/air"),
+            Path::new("/config/mihomore"),
+            Path::new("/data/mihomore"),
+            Path::new("/cache/mihomore"),
         );
 
         assert_eq!(
             paths.subscription_cache_dir,
-            PathBuf::from("/config/air/subscriptions")
+            PathBuf::from("/config/mihomore/subscriptions")
         );
-        assert_eq!(paths.cores_dir, PathBuf::from("/cache/air/core"));
-        assert_eq!(paths.backups_dir, PathBuf::from("/data/air/backups"));
+        assert_eq!(paths.cores_dir, PathBuf::from("/cache/mihomore/core"));
+        assert_eq!(paths.backups_dir, PathBuf::from("/data/mihomore/backups"));
+    }
+
+    #[test]
+    fn portable_roots_are_reported_as_portable() {
+        // 便携模式必须能从 AppPaths 观察到，日志和设置页都依赖这个投影。
+        let paths = AppPaths::from_roots(air_paths::AppDirRoots::portable("/opt/mihomore"));
+
+        assert!(paths.is_portable());
+        assert_eq!(paths.config_dir, PathBuf::from("/opt/mihomore/config"));
+        assert_eq!(paths.cores_dir, PathBuf::from("/opt/mihomore/cache/core"));
     }
 
     #[test]
@@ -85,19 +108,19 @@ mod tests {
         // 目录库会按平台返回不同根目录；这里验证业务子目录在三类根目录下保持一致。
         for (config, data, cache) in [
             (
-                r"C:\Users\Alice\AppData\Roaming\dev\air\air\config",
-                r"C:\Users\Alice\AppData\Roaming\dev\air\air\data",
-                r"C:\Users\Alice\AppData\Local\dev\air\air\cache",
+                r"C:\Users\Alice\AppData\Roaming\org.mihomore\mihomore\config",
+                r"C:\Users\Alice\AppData\Roaming\org.mihomore\mihomore\data",
+                r"C:\Users\Alice\AppData\Local\org.mihomore\mihomore\cache",
             ),
             (
-                "/Users/alice/Library/Application Support/dev.air.air",
-                "/Users/alice/Library/Application Support/dev.air.air",
-                "/Users/alice/Library/Caches/dev.air.air",
+                "/Users/alice/Library/Application Support/org.mihomore.mihomore",
+                "/Users/alice/Library/Application Support/org.mihomore.mihomore",
+                "/Users/alice/Library/Caches/org.mihomore.mihomore",
             ),
             (
-                "/home/alice/.config/air",
-                "/home/alice/.local/share/air",
-                "/home/alice/.cache/air",
+                "/home/alice/.config/mihomore",
+                "/home/alice/.local/share/mihomore",
+                "/home/alice/.cache/mihomore",
             ),
         ] {
             let paths =

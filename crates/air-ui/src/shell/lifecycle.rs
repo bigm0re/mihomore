@@ -15,8 +15,8 @@ pub fn launch(force_start_core: bool, single_instance_events: Receiver<SingleIns
                 )),
                 titlebar: Some(main_window_titlebar_options()),
                 window_decorations: Some(gpui::WindowDecorations::Client),
-                window_min_size: Some(size(px(860.0), px(560.0))),
-                app_id: Some("air".to_string()),
+                window_min_size: Some(size(px(720.0), px(460.0))),
+                app_id: Some("mihomore".to_string()),
                 ..Default::default()
             };
 
@@ -62,13 +62,13 @@ pub fn launch(force_start_core: bool, single_instance_events: Receiver<SingleIns
 
 pub(super) fn main_window_titlebar_options() -> gpui::TitlebarOptions {
     let mut options = TitleBar::title_bar_options();
-    options.title = Some("Air".into());
+    options.title = Some("mihomore".into());
     options
 }
 
 pub(super) fn create_tray() -> (TrayHandle, Receiver<TrayEvent>) {
     let options = TrayOptions {
-        tooltip: "Air mihomo 管理器".to_string(),
+        tooltip: "mihomore".to_string(),
         icon_png: Some(icons::brand_icon_png_bytes()),
     };
     match air_platform::tray::start_tray(options) {
@@ -249,13 +249,38 @@ pub(super) fn should_run_connections_monitoring(
         && matches!(runtime, RuntimeStatus::Running)
 }
 
-pub(super) fn should_run_traffic_monitoring(
-    _active_route: AppRoute,
-    page_states_suspended_for_tray: bool,
-    runtime: &RuntimeStatus,
-) -> bool {
-    // 状态栏网速是跨页面信息，只跟随核心运行状态和托盘挂起状态，不能被当前路由限制。
-    !page_states_suspended_for_tray && matches!(runtime, RuntimeStatus::Running)
+pub(super) fn should_run_traffic_monitoring(runtime: &RuntimeStatus) -> bool {
+    // 流量采样是“内核运行期统计”的数据源：仪表盘的曲线与累计流量必须覆盖整个内核运行期，
+    // 因此只跟随内核是否运行，**不受当前路由和托盘隐藏影响**。
+    // 若在托盘隐藏时停掉，重新打开窗口后这段流量就永久丢失，无法反映内核的真实累计用量。
+    matches!(runtime, RuntimeStatus::Running)
+}
+
+/// 流式监控的期望状态迁移。
+///
+/// `reconcile_*_monitoring` 会在**每个 AppEvent** 上运行，因此“是否重复派发命令”是关键性质：
+/// 若迁移不收敛，每个事件都会重发一次命令，形成派发风暴（历史上系统代理刷新曾因此
+/// 产生过 120 万次派发）。把迁移单独建模，就能把“幂等收敛”写成可单测的不变式。
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) enum MonitoringTransition {
+    /// 需要启动流。
+    Start,
+    /// 需要停止流。
+    Stop,
+    /// 已经是期望状态，无需动作。
+    Hold,
+}
+
+/// 根据“是否应当运行”和“当前是否在运行”推导出需要的迁移。
+///
+/// 收敛性：把返回的迁移应用回 `active` 后再次调用必定得到 `Hold`，
+/// 因此同一状态下重复 reconcile 不会重复派发命令。
+pub(super) fn monitoring_transition(should_run: bool, active: bool) -> MonitoringTransition {
+    match (should_run, active) {
+        (true, false) => MonitoringTransition::Start,
+        (false, true) => MonitoringTransition::Stop,
+        _ => MonitoringTransition::Hold,
+    }
 }
 
 pub(super) fn should_run_log_monitoring(

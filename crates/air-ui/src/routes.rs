@@ -2,6 +2,7 @@ use air_ui::icons::Icon;
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum AppRoute {
+    Dashboard,
     RulesProxy,
     OverrideScript,
     ProxyGroups,
@@ -22,7 +23,8 @@ pub struct RouteDescriptor {
 }
 
 impl AppRoute {
-    pub const ALL: [AppRoute; 6] = [
+    pub const ALL: [AppRoute; 7] = [
+        AppRoute::Dashboard,
         AppRoute::Subscriptions,
         AppRoute::ProxyGroups,
         AppRoute::Connections,
@@ -31,12 +33,24 @@ impl AppRoute {
         AppRoute::Settings,
     ];
 
+    /// 默认首屏。
+    ///
+    /// 首次启动应进入仪表盘，让用户一眼看到运行状态和内核启动按钮。
+    pub const DEFAULT: AppRoute = AppRoute::Dashboard;
+
     pub fn all() -> &'static [AppRoute] {
         &Self::ALL
     }
 
     pub fn descriptor(self) -> RouteDescriptor {
         match self {
+            AppRoute::Dashboard => RouteDescriptor {
+                route: self,
+                label: "仪表盘",
+                title: "仪表盘",
+                description: "总览网络速度、流量统计、系统代理与内核运行状态。",
+                icon: Icon::Gauge,
+            },
             AppRoute::RulesProxy => RouteDescriptor {
                 route: self,
                 label: "规则",
@@ -98,6 +112,7 @@ impl AppRoute {
 
     pub fn id(self) -> &'static str {
         match self {
+            AppRoute::Dashboard => "dashboard",
             AppRoute::RulesProxy => "rules-proxy",
             AppRoute::OverrideScript => "override-script",
             AppRoute::ProxyGroups => "proxy-groups",
@@ -124,6 +139,7 @@ mod tests {
         ids.dedup();
 
         assert_eq!(ids.len(), AppRoute::all().len());
+        assert!(ids.contains(&"dashboard"));
         assert!(ids.contains(&"subscriptions"));
         assert!(ids.contains(&"rules-proxy"));
         assert!(ids.contains(&"override-script"));
@@ -144,6 +160,7 @@ mod tests {
         assert_eq!(
             ids,
             vec![
+                "dashboard",
                 "subscriptions",
                 "proxy-groups",
                 "connections",
@@ -164,6 +181,14 @@ mod tests {
             assert!(!descriptor.description.is_empty());
             assert!(descriptor.icon.asset_path().ends_with(".svg"));
         }
+    }
+
+    #[test]
+    fn dashboard_is_the_first_route_and_default_landing_page() {
+        // 需求要求仪表盘作为第一页面，且首次启动落在仪表盘。
+        assert_eq!(AppRoute::all().first(), Some(&AppRoute::Dashboard));
+        assert_eq!(AppRoute::DEFAULT, AppRoute::Dashboard);
+        assert_eq!(AppRoute::DEFAULT.id(), "dashboard");
     }
 
     #[test]

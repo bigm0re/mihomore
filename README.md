@@ -1,10 +1,10 @@
-# Air
+# mihomore
 
-Air 是一个基于 Rust 的原生桌面 `mihomo` 可视化管理器，目标是提供接近 Clash Verge / FlClash 的管理体验，同时保持清晰的模块边界、较低的资源占用，以及对 `mihomo` 核心进程与 `external-controller` API 的直接控制。
+mihomore 是一个基于 Rust 的原生桌面 `mihomo` 可视化管理器，目标是提供接近 Clash Verge / FlClash 的管理体验，同时保持清晰的模块边界、较低的资源占用，以及对 `mihomo` 核心进程与 `external-controller` API 的直接控制。
 
 当前项目已具备完整的主路径能力，主要开发与验证平台是 Windows；macOS / Linux 仍以基础可编译和部分降级能力为主。
 
-![Air 预览](docs/preview.png)
+![mihomore 预览](docs/preview.png)
 
 ## 当前能力
 
@@ -55,7 +55,8 @@ crates/
   air-mihomo/      # mihomo 核心检测、生命周期、API 客户端和领域模型
   air-config/      # mihomo YAML 模型、解析、校验、合并和 override.js
   air-storage/     # 路径规划、原子写入、配置/订阅/覆写/设置存储
-  air-platform/    # 托盘、自启、服务、提权、窗口等平台能力封装
+  air-paths/       # 便携优先的应用目录解析（config/data/cache）
+  air-platform/    # 托盘、自启、服务、提权、系统代理、窗口等平台能力封装
   air-settings/    # app.config.toml 对应的纯模型
   air-telemetry/   # tracing、日志保留、内存采样和脱敏
   air-error/       # 统一错误类型
@@ -77,7 +78,7 @@ crates/
 cargo fmt --check
 cargo check
 cargo test
-cargo run -p air-desktop --bin air
+cargo run -p air-desktop --bin mihomore
 ```
 
 如需强制重新下载构建期缓存的 `mihomo` / geodata：
@@ -89,14 +90,23 @@ cargo check
 
 ## 运行期文件
 
-应用通过 `ProjectDirs::from("org.air", "", "Air")` 解析平台目录，核心文件包括：
+mihomore 默认是**便携模式**：`config/`、`data/`、`cache/` 直接放在可执行文件同级目录，
+拷贝整个文件夹即可迁移或备份，无需安装。
+
+目录解析顺序（见 `crates/air-paths`）：
+
+1. 环境变量 `MIHOMORE_HOME` 指定的目录（强制生效，便于绿色分发和自动化测试）。
+2. 可执行文件同级目录（便携模式，默认路径）。
+3. 系统用户目录（仅当软件目录不可写时回退，例如放在 `Program Files`）。
+
+核心文件包括：
 
 - `config/app.config.toml`
 - `config/core.common.config.yaml`
 - `config/core.runtime.config.yaml`
 - `config/subscriptions/`
 - `data/override.js`
-- `data/logs/air.log`
+- `data/logs/mihomore.log`
 - `data/logs/core.log`
 
 其中：
@@ -105,6 +115,21 @@ cargo check
 - `core.common.config.yaml` 是用户维护的主配置。
 - `core.runtime.config.yaml` 是运行期生成文件。
 - `override.js` 用于在最终写出 runtime 配置前做脚本覆写。
+
+## 仪表盘
+
+首屏默认进入「仪表盘」，集中展示：
+
+- **网络速度**：实时上/下行曲线，保留最近约 60 秒采样。
+- **流量统计**：环形图 + 本次会话累计上传/下载。
+- **系统代理**：开关与 Windows 系统代理双向一致（读写注册表并刷新 WinINet）。
+  关闭时只回收本程序写入的地址，不会误关用户自己配置的代理。
+- **出站模式**：规则 / 全局 / 直连三选一。
+- **内网 IP 与网络检测**：本机内网地址与公网 IPv4/IPv6。
+- **内核启动按钮**：固定在右下角悬浮显示，启动后展示已运行时长，再次点击停止。
+
+窗口缩放时卡片会按可用宽度自动重排（宽屏 3 列 / 中屏 2 列 / 窄屏 1 列），
+空间不足时内容区域出现滚动条，右下角按钮始终悬浮不被遮挡。
 
 ## 平台说明
 
@@ -115,6 +140,7 @@ Windows 已实现：
 - UAC 提权 helper
 - TUN 场景下的内核服务安装、卸载、启动、停止
 - 连接页进程图标缓存
+- 系统代理开关（与 Windows 设置双向一致）
 
 macOS / Linux 当前仍缺少完整的：
 
@@ -127,7 +153,7 @@ macOS / Linux 当前仍缺少完整的：
 ## CI / 发布现状
 
 - GitHub Actions 当前在 Windows 上执行 `cargo fmt --check` 和 `cargo check`
-- 当 `main` 分支收到新的 push 时，会自动构建并发布 Windows `air.exe` 压缩包
+- 当 `master` 分支收到新的 push 时，会自动构建并发布 Windows `mihomore.exe` 压缩包
 
 目前仓库尚未补齐跨平台发布链路和完整发布文档。
 
@@ -141,7 +167,7 @@ macOS / Linux 当前仍缺少完整的：
 
 ## 许可证
 
-Air 使用 [MIT License](LICENSE)。
+mihomore 使用 [MIT License](LICENSE)。
 
 第三方声明见 [NOTICE.md](NOTICE.md)。
 

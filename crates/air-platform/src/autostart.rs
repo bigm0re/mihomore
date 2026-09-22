@@ -3,11 +3,11 @@ use air_error::{AppResult, PlatformError};
 #[cfg(any(windows, test))]
 use std::path::Path;
 
-pub const AUTOSTART_APP_NAME: &str = "Air";
+pub const AUTOSTART_APP_NAME: &str = "mihomore";
 
 /// 同步当前用户的开机自启状态。
 ///
-/// 自启只负责让系统登录后启动 Air，不携带“静默启动”等 UI 行为参数；
+/// 自启只负责让系统登录后启动 mihomore，不携带“静默启动”等 UI 行为参数；
 /// 启动后是否隐藏到托盘由 `AppSettings::silent_start` 独立控制。
 pub fn set_enabled(enabled: bool) -> AppResult<()> {
     set_enabled_impl(enabled)
@@ -149,9 +149,10 @@ mod tests {
 
     #[test]
     fn autostart_command_quotes_exe_without_silent_argument() {
-        let command = autostart_command_for_exe(Path::new(r"C:\Program Files\Air\air.exe"));
+        let command =
+            autostart_command_for_exe(Path::new(r"C:\Program Files\mihomore\mihomore.exe"));
 
-        assert_eq!(command, r#""C:\Program Files\Air\air.exe""#);
+        assert_eq!(command, r#""C:\Program Files\mihomore\mihomore.exe""#);
         assert!(!command.contains("silent"));
     }
 }

@@ -12,6 +12,8 @@ static INIT: Once = Once::new();
 
 pub fn init_tracing() {
     INIT.call_once(|| {
+        // 日志过滤按 tracing 的 target 匹配，而 target 是 crate 路径（`air_app`、`air_ui` 等）。
+        // 因此这里必须继续使用 `air` 前缀，否则所有应用日志会被静默丢弃。
         let filter =
             EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("air=info"));
         #[cfg(debug_assertions)]
@@ -28,7 +30,7 @@ pub fn init_tracing() {
                     let _ = tracing_subscriber::fmt()
                         .with_env_filter(filter)
                         .with_target(false)
-                        // release 默认写入 air.log；文件日志必须保持纯文本，不能依赖终端颜色探测。
+                        // release 默认写入 mihomore.log；文件日志必须保持纯文本，不能依赖终端颜色探测。
                         .with_ansi(false)
                         .with_writer(writer)
                         .try_init();
@@ -52,12 +54,13 @@ fn file_log_writer() -> std::io::Result<FileLogWriter> {
     use std::fs::OpenOptions;
     use std::sync::{Arc, Mutex};
 
-    let project_dirs = directories::ProjectDirs::from("org.air", "", "Air").ok_or_else(|| {
-        std::io::Error::new(std::io::ErrorKind::Other, "project directories unavailable")
-    })?;
-    let logs_dir = project_dirs.data_dir().join("logs");
+    // 日志目录必须与业务目录保持一致：便携模式下跟随 exe，否则日志会落到用户目录，
+    // 与用户在软件目录里看到的 config/data/cache 不一致。
+    let roots = air_paths::AppDirRoots::resolve()
+        .map_err(|error| std::io::Error::new(std::io::ErrorKind::Other, error.to_string()))?;
+    let logs_dir = roots.data_dir.join("logs");
     std::fs::create_dir_all(&logs_dir)?;
-    let path = logs_dir.join("air.log");
+    let path = logs_dir.join("mihomore.log");
     log_retention::prepare_managed_log_for_append(&path)?;
     let file = OpenOptions::new().create(true).append(true).open(&path)?;
     Ok(FileLogWriter {

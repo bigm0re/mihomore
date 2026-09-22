@@ -53,7 +53,7 @@ jobs:
           "workspace_version=$version" >> $env:GITHUB_OUTPUT
 
       - name: Build release binary
-        run: cargo build --locked --release -p air-desktop --bin air
+        run: cargo build --locked --release -p air-desktop --bin mihomore
 
       - name: Prepare packaged artifact
         id: package
@@ -61,15 +61,15 @@ jobs:
         run: |
           $version = "${{ steps.version.outputs.workspace_version }}"
           $tag = "v${version}"
-          $releaseName = "Air ${version}"
-          $artifactName = "air-windows-x86_64-${tag}.zip"
-          $stagingDir = Join-Path $env:RUNNER_TEMP "air-release"
+          $releaseName = "mihomore ${version}"
+          $artifactName = "mihomore-windows-x86_64-${tag}.zip"
+          $stagingDir = Join-Path $env:RUNNER_TEMP "mihomore-release"
           if (Test-Path $stagingDir) {
             Remove-Item -LiteralPath $stagingDir -Recurse -Force
           }
           New-Item -ItemType Directory -Path $stagingDir | Out-Null
-          Copy-Item -LiteralPath "target/release/air.exe" -Destination (Join-Path $stagingDir "air.exe")
-          Compress-Archive -LiteralPath (Join-Path $stagingDir "air.exe") -DestinationPath $artifactName -Force
+          Copy-Item -LiteralPath "target/release/mihomore.exe" -Destination (Join-Path $stagingDir "mihomore.exe")
+          Compress-Archive -LiteralPath (Join-Path $stagingDir "mihomore.exe") -DestinationPath $artifactName -Force
           "tag=$tag" >> $env:GITHUB_OUTPUT
           "release_name=$releaseName" >> $env:GITHUB_OUTPUT
           "artifact_name=$artifactName" >> $env:GITHUB_OUTPUT

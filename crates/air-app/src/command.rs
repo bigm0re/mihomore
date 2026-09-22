@@ -30,6 +30,14 @@ pub enum AppCommand {
     // 状态栏需要跨页面显示实时网速；`/traffic` 订阅只跟随核心运行状态。
     StartTrafficMonitoring,
     StopTrafficMonitoring,
+    // 仪表盘系统代理开关：写入 Windows 系统代理并回填权威状态。
+    SetSystemProxyEnabled {
+        enabled: bool,
+    },
+    // 重新从注册表读取系统代理状态；启动、窗口聚焦和核心启停后都会派发。
+    RefreshSystemProxy,
+    // 仪表盘网络检测：读取内网 IP 并探测公网 IPv4/IPv6。
+    ProbeDashboardNetwork,
     SetRuntimeMode {
         mode: String,
     },
@@ -160,6 +168,9 @@ impl AppCommand {
             Self::StopConnectionsMonitoring => "StopConnectionsMonitoring",
             Self::StartTrafficMonitoring => "StartTrafficMonitoring",
             Self::StopTrafficMonitoring => "StopTrafficMonitoring",
+            Self::SetSystemProxyEnabled { .. } => "SetSystemProxyEnabled",
+            Self::RefreshSystemProxy => "RefreshSystemProxy",
+            Self::ProbeDashboardNetwork => "ProbeDashboardNetwork",
             Self::SetRuntimeMode { .. } => "SetRuntimeMode",
             Self::SaveConfig { .. } => "SaveConfig",
             Self::SetOverrideScriptEnabled { .. } => "SetOverrideScriptEnabled",

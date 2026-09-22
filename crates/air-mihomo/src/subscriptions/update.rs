@@ -219,7 +219,16 @@ where
         }
         request = request.header(
             USER_AGENT,
-            subscription_download_user_agent(self.core_version.as_deref()),
+            // 显式配置的 `user_agent` 优先于默认值：该字段是订阅源上可编辑并会持久化的配置，
+            // 若总是被默认 UA 覆盖，用户在 UI 里填写的 User-Agent 会静默失效。
+            // 它同时晚于 `request_headers` 写入，因此能覆盖其中自带的 User-Agent。
+            source
+                .user_agent
+                .as_deref()
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(str::to_string)
+                .unwrap_or_else(|| subscription_download_user_agent(self.core_version.as_deref())),
         );
 
         if let Some(previous) = previous {
@@ -951,9 +960,9 @@ proxies:
     }
 
     fn source(url: String) -> SubscriptionSource {
-        let mut source = SubscriptionSource::remote("sub-a", "Sub A", url);
-        source.user_agent = Some("clash.meta/v9.9.9".to_string());
-        source
+        // 默认不预设 user_agent：设计上「留空则跟随当前内核版本」，
+        // 需要自定义 UA 的用例自行赋值（见 forwards_custom_request_headers_including_user_agent）。
+        SubscriptionSource::remote("sub-a", "Sub A", url)
     }
 
     #[tokio::test]
@@ -1003,6 +1012,38 @@ proxies:
             store.cached_content("sub-a").unwrap(),
             yaml_subscription().as_bytes()
         );
+        assert!(contains_header(
+            &server.first_request(),
+            "user-agent",
+            "clash.meta/v1.20.1"
+        ));
+    }
+
+    #[tokio::test]
+    async fn empty_user_agent_falls_back_to_core_version() {
+        // UI 提示「留空则跟随当前内核版本」，因此空值必须回退到核心版本 UA。
+        let server = FakeHttpServer::spawn(vec![FakeResponse {
+            status: 200,
+            headers: Vec::new(),
+            body: yaml_subscription(),
+        }]);
+        let pipeline = SubscriptionUpdatePipeline::with_client(
+            MemoryUpdateStore::default(),
+            reqwest::Client::builder()
+                .timeout(Duration::from_secs(5))
+                .build()
+                .unwrap(),
+        )
+        .with_core_version(Some("1.20.1".to_string()));
+        let mut source = source(server.url.clone());
+        // 空白值与未设置等价，不能被当成合法自定义 UA 发出。
+        source.user_agent = Some("   ".to_string());
+
+        pipeline
+            .update(&source)
+            .await
+            .expect("blank user agent should fall back");
+
         assert!(contains_header(
             &server.first_request(),
             "user-agent",

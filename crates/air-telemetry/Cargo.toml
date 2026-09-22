@@ -4,11 +4,12 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "Tracing, log retention, memory sampling, and redaction helpers for Air."
+description = "Tracing, log retention, memory sampling, and redaction helpers for mihomore."
 publish = false
 
 [dependencies]
 air-error.workspace = true
+air-paths.workspace = true
 directories.workspace = true
 libmimalloc-sys.workspace = true
 time.workspace = true

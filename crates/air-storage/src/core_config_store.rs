@@ -38,7 +38,7 @@ dns:
   use-system-hosts: true
 tun:
   enable: true
-  device: air
+  device: mihomore
   stack: mixed
   dns-hijack:
     - any:53
@@ -247,7 +247,7 @@ fn prune_nulls(value: &mut Value) {
                     Some(child) => {
                         prune_nulls(child);
                         prune_blank_geox_url_fields(&key, child);
-                        is_empty_geox_url(&key, child)
+                        is_empty_geox_url(&key, child) || is_empty_lan_allowed_ips(&key, child)
                     }
                     None => false,
                 };
@@ -263,6 +263,15 @@ fn prune_nulls(value: &mut Value) {
         }
         _ => {}
     }
+}
+
+/// `lan-allowed-ips` 在 mihomo 中是**入站白名单**：字段缺失表示不限制，而空数组表示
+/// “白名单为空”，会拒绝包括回环地址在内的所有入站连接，直接使代理端口整体失效。
+/// 模型层已用 `skip_serializing_if` 避免写出空数组，这里再做一道兜底，确保任何
+/// 后续新增的写入路径都不会把 `lan-allowed-ips: []` 落盘。
+fn is_empty_lan_allowed_ips(key: &Value, child: &Value) -> bool {
+    matches!(key, Value::String(key) if key == "lan-allowed-ips")
+        && matches!(child, Value::Sequence(items) if items.is_empty())
 }
 
 fn is_empty_geox_url(key: &Value, child: &Value) -> bool {
@@ -380,6 +389,52 @@ mod tests {
         assert!(!source.contains("asn:"));
     }
 
+    /// 回归测试：`lan-allowed-ips: []` 会被 mihomo 当成"白名单为空"，从而拒绝包括
+    /// `127.0.0.1` 在内的所有入站连接，使 mixed-port 代理整体不可用。
+    /// 写入管道必须把空白的 lan-allowed-ips 整个省略。
+    #[test]
+    fn empty_lan_allowed_ips_is_not_written_to_core_config() {
+        let (temp, store) = store_in_temp();
+        let document = store.load_user_config().unwrap();
+        assert!(document.typed.global.lan_allowed_ips.is_empty());
+
+        store.save_user_config(&document).unwrap();
+
+        let source =
+            fs::read_to_string(temp.path().join("config/core.common.config.yaml")).unwrap();
+        assert!(
+            !source.contains("lan-allowed-ips"),
+            "空白 lan-allowed-ips 不能落盘：写成 [] 会让 mihomo 拒绝所有入站连接\n{source}"
+        );
+    }
+
+    /// 兜底：即使有人绕过模型层直接构造 YAML 值树，写入管道也要剔除空白的 lan-allowed-ips。
+    #[test]
+    fn prune_nulls_removes_empty_lan_allowed_ips_from_raw_values() {
+        let mut value: Value =
+            serde_yaml::from_str("mixed-port: 7890\nlan-allowed-ips: []\nlan-disallowed-ips: []\n")
+                .unwrap();
+
+        prune_nulls(&mut value);
+        let yaml = serde_yaml::to_string(&value).unwrap();
+
+        assert!(!yaml.contains("lan-allowed-ips"), "{yaml}");
+        assert!(yaml.contains("mixed-port: 7890"), "{yaml}");
+    }
+
+    /// 非空白名单必须保留，避免兜底逻辑误删用户的访问控制配置。
+    #[test]
+    fn prune_nulls_keeps_non_empty_lan_allowed_ips() {
+        let mut value: Value =
+            serde_yaml::from_str("lan-allowed-ips:\n  - 0.0.0.0/0\n  - ::/0\n").unwrap();
+
+        prune_nulls(&mut value);
+        let yaml = serde_yaml::to_string(&value).unwrap();
+
+        assert!(yaml.contains("0.0.0.0/0"), "{yaml}");
+        assert!(yaml.contains("::/0"), "{yaml}");
+    }
+
     #[test]
     fn ensure_user_config_exists_creates_common_config() {
         let (temp, store) = store_in_temp();
@@ -402,7 +457,7 @@ mod tests {
                 .tun
                 .as_ref()
                 .and_then(|tun| tun.device.as_deref()),
-            Some("air")
+            Some("mihomore")
         );
         assert_eq!(
             document

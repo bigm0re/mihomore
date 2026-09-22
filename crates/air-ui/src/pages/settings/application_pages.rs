@@ -291,7 +291,7 @@ fn application_page(
                 core_service_switch_item(core_service, shell.clone()),
                 app_switch_item(
                     "开机自启",
-                    "系统登录后自动启动 Air。",
+                    "系统登录后自动启动 mihomore。",
                     settings.autostart,
                     SettingsBoolField::Autostart,
                     shell.clone(),

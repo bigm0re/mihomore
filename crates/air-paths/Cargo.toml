@@ -1,0 +1,16 @@
+[package]
+name = "air-paths"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Portable-first application directory resolution for mihomore."
+publish = false
+
+[dependencies]
+air-error.workspace = true
+directories.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

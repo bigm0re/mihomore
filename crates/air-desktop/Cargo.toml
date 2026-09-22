@@ -4,11 +4,11 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "Desktop binary crate for the Air mihomo manager."
+description = "Desktop binary crate for the mihomore mihomo manager."
 publish = false
 
 [[bin]]
-name = "air"
+name = "mihomore"
 path = "src/main.rs"
 
 [dependencies]

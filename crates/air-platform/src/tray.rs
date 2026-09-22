@@ -21,7 +21,7 @@ pub struct TrayOptions {
 impl Default for TrayOptions {
     fn default() -> Self {
         Self {
-            tooltip: "Air".to_string(),
+            tooltip: "mihomore".to_string(),
             icon_png: None,
         }
     }
@@ -130,7 +130,7 @@ mod windows {
     const MENU_START_CORE: usize = 1003;
     const MENU_STOP_CORE: usize = 1004;
     const MENU_QUIT: usize = 1005;
-    const TRAY_CLASS_NAME: &str = "AirTrayMessageWindow";
+    const TRAY_CLASS_NAME: &str = "MihomoreTrayMessageWindow";
     const TRAY_ICON_SIZE: u32 = 32;
 
     static TRAY_EVENTS: OnceLock<Mutex<Option<mpsc::Sender<TrayEvent>>>> = OnceLock::new();
@@ -152,7 +152,7 @@ mod windows {
     ) -> AppResult<TrayHandle> {
         let (ready_tx, ready_rx) = mpsc::sync_channel(1);
         let join = std::thread::Builder::new()
-            .name("air-tray".to_string())
+            .name("mihomore-tray".to_string())
             .spawn(move || run_tray_thread(options, events, ready_tx))
             .map_err(|error| {
                 PlatformError::OperationFailed(format!("启动托盘线程失败: {error}"))

@@ -3,10 +3,10 @@
 use serde::{Deserialize, Serialize};
 
 use air_error::AppResult;
-pub const CORE_SERVICE_NAME: &str = "AirMihomoCore";
-pub const CORE_SERVICE_DISPLAY_NAME: &str = "Air Mihomo Core Service";
-pub(super) const CORE_SERVICE_ARG: &str = "--air-mihomo-service";
-pub(super) const ELEVATED_SERVICE_HELPER_ARG: &str = "--air-elevated-service-helper";
+pub const CORE_SERVICE_NAME: &str = "MihomoreCore";
+pub const CORE_SERVICE_DISPLAY_NAME: &str = "mihomore Core Service";
+pub(super) const CORE_SERVICE_ARG: &str = "--mihomore-core-service";
+pub(super) const ELEVATED_SERVICE_HELPER_ARG: &str = "--mihomore-elevated-service-helper";
 pub(super) const SERVICE_OWNER_PID_ARG: &str = "--owner-pid";
 pub(super) const SERVICE_ADMIN_RIGHTS_SDDL: &str = "CCDCLCSWRPWPDTLOCRSDRCWDWO";
 pub(super) const SERVICE_INTERACTIVE_USER_RIGHTS_SDDL: &str = "LCRPWP";
@@ -55,12 +55,12 @@ impl CoreServicePaths {
     }
 
     pub fn resolve_default() -> AppResult<Self> {
-        let project_dirs = directories::ProjectDirs::from("org.air", "", "Air")
-            .ok_or(air_error::StorageError::ProjectDirsUnavailable)?;
+        // 与 AppPaths 保持一致：便携优先，软件目录不可写时回退系统目录。
+        let roots = air_paths::AppDirRoots::resolve()?;
         Ok(Self::from_base_dirs(
-            project_dirs.config_dir(),
-            project_dirs.data_dir(),
-            project_dirs.cache_dir(),
+            &roots.config_dir,
+            &roots.data_dir,
+            &roots.cache_dir,
         ))
     }
 

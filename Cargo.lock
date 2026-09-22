@@ -45,14 +45,17 @@ dependencies = [
  "air-config",
  "air-error",
  "air-mihomo",
+ "air-paths",
  "air-platform",
  "air-settings",
  "air-storage",
  "air-telemetry",
  "async-trait",
+ "reqwest",
  "serde",
  "serde_json",
  "tempfile",
+ "time",
  "tokio",
  "tracing",
  "url",
@@ -124,10 +127,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "air-paths"
+version = "0.1.0"
+dependencies = [
+ "air-error",
+ "directories",
+ "tempfile",
+ "tracing",
+]
+
+[[package]]
 name = "air-platform"
 version = "0.1.0"
 dependencies = [
  "air-error",
+ "air-paths",
  "air-telemetry",
  "directories",
  "gpui",
@@ -156,6 +170,7 @@ dependencies = [
  "air-config",
  "air-error",
  "air-mihomo",
+ "air-paths",
  "air-settings",
  "async-trait",
  "directories",
@@ -172,6 +187,7 @@ name = "air-telemetry"
 version = "0.1.0"
 dependencies = [
  "air-error",
+ "air-paths",
  "directories",
  "libmimalloc-sys",
  "tempfile",

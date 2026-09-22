@@ -14,6 +14,7 @@ impl Shell {
         &self,
         route: AppRoute,
         palette: ShellPalette,
+        compact: bool,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let active = route == self.active_route;
@@ -23,15 +24,20 @@ impl Shell {
         } else {
             palette.text
         };
+        // 紧凑模式下缩小图标与内边距，让 7 个标签在窄窗口仍能完整显示。
+        let icon_size = if compact { 15.0 } else { 18.0 };
+        let horizontal_padding = if compact { 6.0 } else { 8.0 };
+        let gap = if compact { 4.0 } else { 8.0 };
 
         div()
             .id(format!("title-menu-{}", route.id()))
             .flex()
             .items_center()
             .justify_center()
-            .gap_2()
+            .gap(px(gap))
             .h(px(24.0))
-            .px_2()
+            .px(px(horizontal_padding))
+            .flex_shrink_0()
             .rounded_md()
             .cursor_pointer()
             .text_sm()
@@ -48,7 +54,11 @@ impl Shell {
                     this.bg(palette.hover)
                 }
             })
-            .child(icons::icon(descriptor.icon, text_color))
+            .child(icons::sized_icon(
+                descriptor.icon,
+                text_color,
+                px(icon_size),
+            ))
             .child(descriptor.label)
             // 菜单项位于 gpui-component TitleBar 内部；按下事件必须截断，
             // 否则外层标题栏会把点击识别为窗口拖拽区域，导致 on_click 不触发。
@@ -67,6 +77,42 @@ impl Shell {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
+        if self.active_route == AppRoute::Dashboard {
+            // 仪表盘不持有输入控件，但需要把可用宽度和当前时间传给页面：
+            // 宽度决定卡片列数（响应式），时间用于刷新内核运行时长。
+            let available_width = window.viewport_size().width.as_f32().max(0.0);
+            let now_unix = current_unix_timestamp();
+            let core_pending = self.pending_core_command().is_some();
+            let runtime_mode = self.status_runtime_mode.clone();
+            // TUN 开关读取已保存的核心配置投影；写入中时禁用交互，避免重复提交。
+            let tun_enabled = self.status_tun_enabled;
+            let tun_pending = self
+                .pending_commands
+                .values()
+                .any(|command| matches!(command, AppCommand::SaveConfig { .. }));
+            return div()
+                .id("page-dashboard-root")
+                .flex()
+                .flex_col()
+                .flex_1()
+                .min_w(px(0.0))
+                .min_h(px(0.0))
+                .overflow_hidden()
+                .bg(palette.background)
+                .child(dashboard::render_dashboard_page(
+                    &self.snapshot,
+                    self.dashboard_traffic.state(),
+                    &runtime_mode,
+                    tun_enabled,
+                    tun_pending,
+                    core_pending,
+                    available_width,
+                    now_unix,
+                    palette,
+                    cx,
+                ));
+        }
+
         if self.active_route == AppRoute::Logs {
             if self.log_runtime.is_none() {
                 self.log_runtime = Some(create_log_runtime(window, cx));
@@ -494,8 +540,24 @@ impl Shell {
     pub(super) fn render_title_bar(
         &self,
         palette: ShellPalette,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
+        // 标题栏必须响应式：7 个导航项在窄窗口下会挤爆固定宽度的两侧区域。
+        // 这里根据可用宽度决定两侧宽度与是否显示品牌文字，保证导航项不被压碎。
+        let available = window.viewport_size().width.as_f32().max(0.0);
+        let compact = available < 980.0;
+        let very_compact = available < 820.0;
+        let side_width = if very_compact {
+            // 极窄：两侧只留图标/最小间隔，把宽度让给导航。
+            56.0
+        } else if compact {
+            110.0
+        } else {
+            TITLE_BAR_SIDE_WIDTH
+        };
+        let show_brand_text = !compact;
+
         let mut nav = div()
             .flex()
             .items_center()
@@ -504,7 +566,37 @@ impl Shell {
             .h_full()
             .min_w_0();
         for route in AppRoute::all() {
-            nav = nav.child(self.render_title_bar_menu_item(*route, palette, cx));
+            nav = nav.child(self.render_title_bar_menu_item(*route, palette, compact, cx));
+        }
+
+        // 品牌标记：用一个清晰的矢量式圆角方块 + "M" 字母，
+        // 不再缩放 1004x897 的渐变图片。那张图在 22px 下会糊成一个灰蓝色圆形，
+        // 用户无法辨认（曾被当成"不明圆形图案"）。这里用绘制元素，任何尺寸都清晰。
+        let mark_size = if very_compact { 18.0 } else { 22.0 };
+        let mut brand = div()
+            .flex()
+            .items_center()
+            .gap_2()
+            .w(px(side_width))
+            .min_w(px(side_width))
+            .flex_shrink_0()
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .w(px(mark_size))
+                    .h(px(mark_size))
+                    .flex_none()
+                    .rounded(px(super::components::foundation::RADIUS_SM))
+                    .bg(palette.active)
+                    .text_color(palette.active_text)
+                    .font_bold()
+                    .text_size(px(mark_size * 0.62))
+                    .child("M"),
+            );
+        if show_brand_text {
+            brand = brand.child(div().text_sm().font_semibold().child("mihomore"));
         }
 
         TitleBar::new().child(
@@ -518,26 +610,13 @@ impl Shell {
                 .pr_2()
                 .text_color(palette.text)
                 // 自定义标题栏中间承载全局导航；路由切换仍只触发 Shell 的页面状态装卸。
-                .child(
-                    div()
-                        .flex()
-                        .items_center()
-                        .gap_2()
-                        .w(px(TITLE_BAR_SIDE_WIDTH))
-                        .min_w(px(TITLE_BAR_SIDE_WIDTH))
-                        .child(
-                            img(icons::brand_titlebar_icon_asset_path())
-                                .w(px(22.0))
-                                .h(px(22.0))
-                                .object_fit(ObjectFit::Contain),
-                        )
-                        .child(div().text_sm().font_semibold().child("Air")),
-                )
+                .child(brand)
                 .child(div().flex_1().min_w_0().flex().justify_center().child(nav))
                 .child(
                     div()
-                        .w(px(TITLE_BAR_SIDE_WIDTH))
-                        .min_w(px(TITLE_BAR_SIDE_WIDTH)),
+                        .w(px(side_width))
+                        .min_w(px(side_width))
+                        .flex_shrink_0(),
                 ),
         )
     }
@@ -556,7 +635,7 @@ impl Render for Shell {
             .bg(palette.background)
             .text_color(palette.text)
             .font(app_ui_font())
-            .child(self.render_title_bar(palette, cx))
+            .child(self.render_title_bar(palette, window, cx))
             .child(
                 div()
                     .flex()

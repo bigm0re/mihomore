@@ -4,13 +4,14 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "File layout, atomic persistence, backups, and stores for Air configuration data."
+description = "File layout, atomic persistence, backups, and stores for mihomore configuration data."
 publish = false
 
 [dependencies]
 air-config.workspace = true
 air-error.workspace = true
 air-mihomo.workspace = true
+air-paths.workspace = true
 air-settings.workspace = true
 async-trait.workspace = true
 directories.workspace = true

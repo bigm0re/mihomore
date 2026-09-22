@@ -115,10 +115,13 @@ impl Shell {
             });
 
         let mut shell = Self {
-            active_route: AppRoute::Subscriptions,
+            // 首次启动落在仪表盘：用户需要先看到运行状态和内核启动按钮。
+            active_route: AppRoute::DEFAULT,
             // GPUI state 只保存窗口渲染所需的局部状态；业务能力仍在 app/domain/service 层。
             snapshot: initial_snapshot,
             monitor: monitor::MonitorPageState::default(),
+            dashboard_traffic: dashboard::state::DashboardTrafficRun::default(),
+            dashboard_probe_pending: false,
             log_monitoring_active: false,
             traffic_monitoring_active: false,
             connections_monitoring_active: false,
@@ -161,6 +164,8 @@ impl Shell {
         };
         shell.reconcile_traffic_monitoring();
         shell.reconcile_connections_monitoring_focus();
+        // 启动时同步系统代理真实状态和网络检测，使仪表盘首屏就是准确数据。
+        shell.reconcile_dashboard_backend();
         if hide_window_on_startup {
             let generation = shell.begin_tray_suspension();
             shell.destroy_all_page_states_for_tray();
@@ -190,6 +195,7 @@ impl Shell {
             self.reconcile_proxy_groups_backend();
             self.reconcile_rules_backend();
             self.reconcile_connections_monitoring_focus();
+            self.reconcile_dashboard_backend();
         }
     }
 
@@ -197,6 +203,13 @@ impl Shell {
         // 页面状态只服务当前可见路由；离开页面时立即丢弃列表、日志、弹窗和编辑草稿。
         // 这样可以避免后台隐藏页面继续持有大量运行态数据。
         match route {
+            AppRoute::Dashboard => {
+                // 注意：**不能**在这里清空 `dashboard_traffic`。
+                // 流量统计的生命周期属于“内核运行期”，不属于页面：关闭窗口到托盘再打开、
+                // 或在页面间来回切换都不应该丢掉曲线。清空只发生在内核进入 Running 时，
+                // 见 `Shell::begin_dashboard_traffic_run`。
+                self.dashboard_probe_pending = false;
+            }
             AppRoute::Logs => {
                 self.monitor = monitor::MonitorPageState::default();
                 self.log_runtime = None;
@@ -253,6 +266,7 @@ impl Shell {
 
     pub(super) fn destroy_all_page_states_for_tray(&mut self) {
         for route in [
+            AppRoute::Dashboard,
             AppRoute::RulesProxy,
             AppRoute::OverrideScript,
             AppRoute::ProxyGroups,
@@ -294,6 +308,10 @@ impl Shell {
     ) {
         // 重新打开页面时从当前 app/service 投影装载，而不是复用离开前的 GUI 状态。
         match route {
+            AppRoute::Dashboard => {
+                // 仪表盘没有输入控件，只需重新同步后端投影和网络检测。
+                self.reconcile_dashboard_backend();
+            }
             AppRoute::Logs => {
                 self.log_runtime = Some(create_log_runtime(window, cx));
             }
@@ -368,55 +386,152 @@ impl Shell {
             self.page_states_suspended_for_tray,
             &self.snapshot.runtime,
         );
-        match (should_run, self.connections_monitoring_active) {
-            (true, false) => {
+        match monitoring_transition(should_run, self.connections_monitoring_active) {
+            MonitoringTransition::Start => {
                 self.connections.start_stream();
                 self.connections_monitoring_active = true;
                 self.dispatch_command(AppCommand::StartConnectionsMonitoring);
             }
-            (false, true) => {
+            MonitoringTransition::Stop => {
                 self.connections.stop_stream();
                 self.connections_monitoring_active = false;
                 self.dispatch_command(AppCommand::StopConnectionsMonitoring);
             }
-            _ => {}
+            MonitoringTransition::Hold => {}
         }
     }
 
-    pub(super) fn reconcile_traffic_monitoring(&mut self) {
-        let should_run = should_run_traffic_monitoring(
-            self.active_route,
-            self.page_states_suspended_for_tray,
-            &self.snapshot.runtime,
+    /// 开启一个新的流量统计运行期（内核每次启动调用一次）。
+    ///
+    /// 这是**唯一**会清空曲线与累计值的入口。之所以用递增编号而不是布尔标记，
+    /// 是为了让“停止后立即重启”也能被识别为新运行期。
+    pub(super) fn begin_dashboard_traffic_run(&mut self) {
+        self.dashboard_traffic.begin_core_run();
+        tracing::info!(
+            run_id = self.dashboard_traffic.run_id(),
+            "dashboard traffic statistics started a new core run"
         );
-        match (should_run, self.traffic_monitoring_active) {
-            (true, false) => {
+    }
+    pub(super) fn reconcile_traffic_monitoring(&mut self) {
+        let should_run = should_run_traffic_monitoring(&self.snapshot.runtime);
+        match monitoring_transition(should_run, self.traffic_monitoring_active) {
+            MonitoringTransition::Start => {
                 self.traffic_monitoring_active = true;
                 self.dispatch_command(AppCommand::StartTrafficMonitoring);
             }
-            (false, true) => {
+            MonitoringTransition::Stop => {
                 self.traffic_monitoring_active = false;
                 self.monitor.release_transient_stream_state();
                 self.dispatch_command(AppCommand::StopTrafficMonitoring);
             }
-            _ => {}
+            MonitoringTransition::Hold => {}
         }
+    }
+
+    /// 同步仪表盘依赖的后端投影。
+    ///
+    /// 系统代理是操作系统级状态，可能被用户在系统设置里改动，因此进入仪表盘、
+    /// 窗口恢复和内核状态变化后都要重新读取，保证开关与 Windows 实际状态一致。
+    /// 网络检测只在从未探测过时自动触发，之后由用户点刷新按钮。
+    ///
+    /// 注意：本方法**不能**在每个 AppEvent 上调用。系统代理刷新会写入快照并产生
+    /// 新事件，而 `pending_commands` 在 `CommandFinished` 处理时已先被移除，
+    /// 若在事件回调里无条件调用会形成"刷新 → 完成 → 再刷新"的无限循环。
+    /// 因此只在路由进入、托盘恢复和内核状态变化这三类明确时机调用。
+    pub(super) fn reconcile_dashboard_backend(&mut self) {
+        if self.page_states_suspended_for_tray {
+            return;
+        }
+        if self.active_route != AppRoute::Dashboard {
+            return;
+        }
+        self.refresh_dashboard_system_proxy();
+        self.maybe_probe_dashboard_network();
+    }
+
+    /// 派发一次系统代理状态刷新（已有同类命令在途时跳过）。
+    pub(super) fn refresh_dashboard_system_proxy(&mut self) {
+        let proxy_pending = self
+            .pending_commands
+            .values()
+            .any(|command| matches!(command, AppCommand::RefreshSystemProxy));
+        if !proxy_pending {
+            self.dispatch_command(AppCommand::RefreshSystemProxy);
+        }
+    }
+
+    /// 首次进入仪表盘时自动做一次网络检测，使首屏不是空白。
+    pub(super) fn maybe_probe_dashboard_network(&mut self) {
+        let never_probed = self.snapshot.network.checked_at_unix.is_none();
+        if never_probed && !self.dashboard_probe_pending {
+            self.probe_dashboard_network();
+        }
+    }
+
+    /// 从仪表盘切换内核启停。
+    pub(crate) fn toggle_core_from_dashboard(&mut self) {
+        match self.snapshot.runtime {
+            RuntimeStatus::Running => self.dispatch_command(AppCommand::StopCore),
+            RuntimeStatus::Idle | RuntimeStatus::Failed { .. } => {
+                self.dispatch_command(AppCommand::StartCore);
+            }
+            RuntimeStatus::Starting | RuntimeStatus::Stopping => {}
+        }
+    }
+
+    /// 从仪表盘切换系统代理。
+    pub(crate) fn toggle_system_proxy_from_dashboard(&mut self, enabled: bool) {
+        self.dispatch_command(AppCommand::SetSystemProxyEnabled { enabled });
+    }
+
+    /// 从仪表盘切换虚拟网卡（TUN）。
+    ///
+    /// 复用状态栏菜单的已保存配置写入路径，保证两处开关读写同一字段（`tun.enable`），
+    /// 并同步状态栏与配置页的投影。
+    pub(crate) fn toggle_tun_from_dashboard(
+        &mut self,
+        enabled: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.toggle_tun_from_status_menu(enabled, window, cx);
+    }
+
+    /// 从仪表盘切换出站模式。
+    ///
+    /// 复用状态栏的 `set_runtime_mode`，保证两处写入同一份配置且投影一致。
+    pub(crate) fn set_runtime_mode_from_dashboard(
+        &mut self,
+        mode: &'static str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.set_runtime_mode(mode, window, cx);
+    }
+
+    /// 触发仪表盘网络检测。
+    pub(crate) fn probe_dashboard_network(&mut self) {
+        if self.dashboard_probe_pending {
+            return;
+        }
+        self.dashboard_probe_pending = true;
+        self.dispatch_command(AppCommand::ProbeDashboardNetwork);
     }
 
     pub(super) fn reconcile_log_monitoring_focus(&mut self) {
         let should_run =
             should_run_log_monitoring(self.active_route, self.page_states_suspended_for_tray);
-        match (should_run, self.log_monitoring_active) {
-            (true, false) => {
+        match monitoring_transition(should_run, self.log_monitoring_active) {
+            MonitoringTransition::Start => {
                 self.log_monitoring_active = true;
                 self.dispatch_command(AppCommand::StartLogMonitoring);
             }
-            (false, true) => {
+            MonitoringTransition::Stop => {
                 self.log_monitoring_active = false;
                 self.monitor.stop_streams();
                 self.dispatch_command(AppCommand::StopLogMonitoring);
             }
-            _ => {}
+            MonitoringTransition::Hold => {}
         }
     }
 

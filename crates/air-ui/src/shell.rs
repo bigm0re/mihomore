@@ -4,9 +4,8 @@ use std::time::Duration;
 
 use gpui::{
     App, AppContext, Context, Entity, Hsla, InteractiveElement, IntoElement, MouseButton,
-    ObjectFit, ParentElement, PathPromptOptions, Render, ScrollHandle, StatefulInteractiveElement,
-    Styled, StyledImage, Subscription, Window, WindowAppearance, WindowBounds, WindowOptions, div,
-    font, img, px, rgb, size,
+    ParentElement, PathPromptOptions, Render, ScrollHandle, StatefulInteractiveElement, Styled,
+    Subscription, Window, WindowAppearance, WindowBounds, WindowOptions, div, font, px, rgb, size,
 };
 use gpui_component::input::{InputEvent, InputState, TabSize};
 use gpui_component::menu::{ContextMenuExt, PopupMenuItem};
@@ -31,8 +30,8 @@ use super::{
     components,
     icons::{self, Icon},
     pages::{
-        config_editor, connections, monitor, override_script, proxy_groups, rules, settings,
-        subscriptions,
+        config_editor, connections, dashboard, monitor, override_script, proxy_groups, rules,
+        settings, subscriptions,
     },
     routes::AppRoute,
 };
@@ -164,6 +163,17 @@ fn c(hex: u32) -> Hsla {
     rgb(hex).into()
 }
 
+/// 当前 Unix 时间戳（秒）。
+///
+/// air-ui 不直接依赖 `time` crate；这里用 `std` 计算即可满足仪表盘运行时长展示。
+/// 系统时钟早于 Unix 纪元（理论上不可能）时回退到 0，避免出现负时间戳。
+pub(crate) fn current_unix_timestamp() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|elapsed| elapsed.as_secs() as i64)
+        .unwrap_or(0)
+}
+
 #[derive(Clone, Copy)]
 pub(crate) struct ShellPalette {
     pub(crate) background: Hsla,
@@ -185,6 +195,14 @@ pub struct Shell {
     active_route: AppRoute,
     snapshot: AppSnapshot,
     monitor: monitor::MonitorPageState,
+    /// 仪表盘流量统计（曲线采样 + 累计流量）。
+    ///
+    /// 独立于日志页的 `monitor`：仪表盘需要保留曲线窗口，而状态栏只需要最新速率。
+    /// 生命周期与**内核运行期**绑定（见 `DashboardTrafficRun`），
+    /// 不随窗口开关或路由切换清空。
+    dashboard_traffic: dashboard::state::DashboardTrafficRun,
+    /// 仪表盘「网络检测」是否正在探测，用于避免重复点击。
+    dashboard_probe_pending: bool,
     log_monitoring_active: bool,
     traffic_monitoring_active: bool,
     connections_monitoring_active: bool,
@@ -300,8 +318,8 @@ mod tests {
     use super::*;
     use crate::shell::actions::collect_subscription_diagnostic_notices;
     use crate::shell::lifecycle::{
-        should_dispatch_subscription_refresh, should_hide_window_on_startup,
-        should_run_traffic_monitoring, should_start_core_on_startup,
+        MonitoringTransition, monitoring_transition, should_dispatch_subscription_refresh,
+        should_hide_window_on_startup, should_run_traffic_monitoring, should_start_core_on_startup,
     };
     use air_mihomo::streams::StreamEvent;
 
@@ -677,27 +695,58 @@ mod tests {
     }
 
     #[test]
-    fn traffic_monitoring_runs_for_running_core_regardless_of_route() {
-        assert!(should_run_traffic_monitoring(
-            AppRoute::Logs,
-            false,
-            &RuntimeStatus::Running,
-        ));
-        assert!(should_run_traffic_monitoring(
-            AppRoute::Connections,
-            false,
-            &RuntimeStatus::Running,
-        ));
-        assert!(!should_run_traffic_monitoring(
-            AppRoute::Logs,
-            true,
-            &RuntimeStatus::Running,
-        ));
-        assert!(!should_run_traffic_monitoring(
-            AppRoute::Logs,
-            false,
-            &RuntimeStatus::Idle,
-        ));
+    fn monitoring_transition_converges_after_a_single_apply() {
+        // 关键不变式：把迁移应用回 active 后再次推导必定得到 Hold。
+        // 否则每个 AppEvent 都会重发一次命令，形成派发风暴。
+        for should_run in [true, false] {
+            for active in [true, false] {
+                let transition = monitoring_transition(should_run, active);
+                let next_active = match transition {
+                    MonitoringTransition::Start => true,
+                    MonitoringTransition::Stop => false,
+                    MonitoringTransition::Hold => active,
+                };
+                assert_eq!(
+                    monitoring_transition(should_run, next_active),
+                    MonitoringTransition::Hold,
+                    "should_run={should_run} active={active} 未收敛"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn monitoring_transition_only_acts_on_real_state_changes() {
+        assert_eq!(
+            monitoring_transition(true, false),
+            MonitoringTransition::Start
+        );
+        assert_eq!(
+            monitoring_transition(false, true),
+            MonitoringTransition::Stop
+        );
+        // 已经是期望状态时不能重复派发命令。
+        assert_eq!(
+            monitoring_transition(true, true),
+            MonitoringTransition::Hold
+        );
+        assert_eq!(
+            monitoring_transition(false, false),
+            MonitoringTransition::Hold
+        );
+    }
+
+    #[test]
+    fn traffic_monitoring_spans_the_whole_core_run() {
+        // 流量采样必须覆盖整个内核运行期：不受当前路由或托盘隐藏影响，
+        // 否则关闭窗口到托盘期间的流量会永久丢失。
+        assert!(should_run_traffic_monitoring(&RuntimeStatus::Running));
+        assert!(!should_run_traffic_monitoring(&RuntimeStatus::Idle));
+        assert!(!should_run_traffic_monitoring(&RuntimeStatus::Starting));
+        assert!(!should_run_traffic_monitoring(&RuntimeStatus::Stopping));
+        assert!(!should_run_traffic_monitoring(&RuntimeStatus::Failed {
+            message: "boom".into()
+        }));
     }
 
     #[test]

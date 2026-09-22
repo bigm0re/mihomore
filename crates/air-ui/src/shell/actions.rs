@@ -39,6 +39,31 @@ impl Shell {
             AppEvent::CommandFinished { id } => self.pending_commands.remove(id).is_some(),
             _ => false,
         };
+        // 仪表盘流量统计的生命周期属于**内核运行期**，不属于窗口或页面：
+        // 只要内核在跑，就持续累积，使关闭窗口到托盘再打开后曲线与累计值仍然连续。
+        // 因此这里只看“流量流是否在跑”（即内核是否运行），不看当前路由与托盘挂起状态。
+        if let AppEvent::MihomoStreamEvent(StreamEvent::Traffic { upload, download }) = &event
+            && self.traffic_monitoring_active
+        {
+            self.dashboard_traffic.record(*upload, *download);
+        }
+        // 内核每次进入 Running 就开启一个新的统计运行期，这是唯一清空流量数据的地方。
+        // `RuntimeStatusChanged` 仅在状态真实变化时发出，所以“停止后立即重启”也会得到新编号。
+        if let AppEvent::RuntimeStatusChanged(RuntimeStatus::Running) = &event {
+            self.begin_dashboard_traffic_run();
+        }
+        // 网络探测命令结束后释放"探测中"标记，允许用户再次点刷新。
+        if let AppEvent::CommandFinished { id } = &event
+            && matches!(
+                self.pending_commands.get(id),
+                Some(AppCommand::ProbeDashboardNetwork)
+            )
+        {
+            self.dashboard_probe_pending = false;
+        }
+        if let AppEvent::NetworkProbeCompleted(_) = &event {
+            self.dashboard_probe_pending = false;
+        }
         let should_refresh_groups = matches!(
             &event,
             AppEvent::SnapshotChanged(_) | AppEvent::RuntimeStatusChanged(_)
@@ -58,11 +83,20 @@ impl Shell {
                 event,
             )
         };
+        // 流量采样跨越整个内核运行期，必须**脱离**托盘挂起守卫：
+        // 静默启动（silent-start）时窗口从一开始就是隐藏的，若把 reconcile 放在
+        // `!suspended` 分支里，内核启动后就不会开始采样，隐藏期间的真实流量会全部丢失。
+        self.reconcile_traffic_monitoring();
         if !self.page_states_suspended_for_tray {
-            // 核心状态或路由变化后重新评估后台订阅，避免隐藏页面继续消费事件。
-            self.reconcile_traffic_monitoring();
+            // 以下都是页面级状态，只在窗口可见时同步；隐藏时页面状态已释放，无需重建。
             self.reconcile_log_monitoring_focus();
             self.reconcile_connections_monitoring_focus();
+            if should_refresh_groups {
+                // 系统代理只在快照/运行态变化时重新读取。不能无条件调用：
+                // 刷新会写入快照产生新事件，而 `pending_commands` 已在上面被移除，
+                // 会在 `CommandFinished` 上形成无限重发循环。
+                self.refresh_dashboard_system_proxy();
+            }
             if finished_config_save {
                 self.refresh_status_tun_enabled_from_saved_config();
             }
@@ -179,7 +213,12 @@ impl Shell {
             AppRoute::ProxyGroups => {}
             AppRoute::Connections => self.sync_connection_detail_editor(window, cx),
             AppRoute::Subscriptions => self.sync_subscription_yaml_editor(window, cx),
-            AppRoute::RulesProxy | AppRoute::Logs | AppRoute::Profiles | AppRoute::Settings => {}
+            AppRoute::RulesProxy
+            | AppRoute::Logs
+            | AppRoute::Profiles
+            | AppRoute::Settings
+            // 仪表盘没有输入控件，无需同步。
+            | AppRoute::Dashboard => {}
         }
     }
 

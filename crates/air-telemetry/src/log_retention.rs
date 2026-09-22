@@ -159,7 +159,7 @@ mod tests {
             "core-2026-05-31.log",
             "core-2026-06-01.log",
             "core-2026-06-02.log",
-            "air-2026-05-30.log",
+            "other-2026-05-30.log",
         ] {
             fs::write(temp.path().join(name), name).unwrap();
         }
@@ -171,6 +171,6 @@ mod tests {
         assert!(temp.path().join("core-2026-05-31.log").exists());
         assert!(temp.path().join("core-2026-06-01.log").exists());
         assert!(temp.path().join("core-2026-06-02.log").exists());
-        assert!(temp.path().join("air-2026-05-30.log").exists());
+        assert!(temp.path().join("other-2026-05-30.log").exists());
     }
 }

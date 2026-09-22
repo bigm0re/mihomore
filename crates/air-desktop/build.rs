@@ -24,8 +24,8 @@ fn embed_windows_app_icon() {
     // Windows 可执行文件图标在构建期从 PNG 转成 ICO 并嵌入资源，保持仓库内只维护单一源素材。
     let out_dir = PathBuf::from(env::var("OUT_DIR").expect("OUT_DIR should be set by cargo"));
     let icon_png = manifest_path("assets/app-icon.png");
-    let icon_ico = out_dir.join("air-app-icon.ico");
-    let resource_rc = out_dir.join("air-app-icon.rc");
+    let icon_ico = out_dir.join("mihomore-app-icon.ico");
+    let resource_rc = out_dir.join("mihomore-app-icon.rc");
 
     let icon = image::open(&icon_png)
         .unwrap_or_else(|error| panic!("failed to load {}: {error}", icon_png.display()));

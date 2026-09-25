@@ -7,6 +7,8 @@ pub mod runtime;
 pub mod services;
 pub mod state;
 pub mod subscription_controller;
+/// 测试环境探测：避免测试进程产生真实系统副作用。
+pub mod test_environment;
 
 use air_error::AppResult;
 

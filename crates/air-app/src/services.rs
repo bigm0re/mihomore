@@ -359,10 +359,13 @@ impl AppServices {
     /// 开启时指向当前内核端口；关闭时只回收本程序写入的地址，遇到其它程序配置的
     /// 代理则直接报错，避免误关用户自己设置的代理。
     pub fn apply_system_proxy(&self, enabled: bool) -> AppResult<SystemProxyState> {
-        // 单元测试绝不能改写开发机真实的系统代理注册表：
-        // `AppServices::with_paths` 被大量测试调用，一旦写入会静默破坏开发环境网络。
-        #[cfg(test)]
-        {
+        // 绝不能改写真实系统代理注册表：`AppServices::with_paths` 被大量测试调用，
+        // 一旦写入会静默破坏开发环境网络。
+        //
+        // 注意：这里必须用**运行期**开关而不是 `#[cfg(test)]`。`cfg(test)` 只在
+        // air-app 自身的单元测试里为真；当 air-ui 的测试把 air-app 当作普通依赖
+        // 链接时它是 false，守卫会静默失效——历史上因此真的关掉过开发机的系统代理。
+        if crate::test_environment::is_test_environment() {
             let server = if enabled {
                 self.desired_system_proxy_server()
             } else {
@@ -375,12 +378,14 @@ impl AppServices {
                 server,
                 port_alive: None,
             };
-            tracing::info!(enabled, "test build: skipping real system proxy write");
+            tracing::info!(
+                enabled,
+                "test environment: skipping real system proxy write"
+            );
             self.snapshots.set_system_proxy(state.clone());
             return Ok(state);
         }
 
-        #[cfg(not(test))]
         {
             let desired = self.desired_system_proxy_server();
             if !enabled {
@@ -628,13 +633,12 @@ impl AppServices {
     ///
     /// 失败只记录日志，不能阻断核心启停主流程。
     pub fn reconcile_system_proxy_with_core(&self) {
-        // 同上：测试构建不触碰真实系统代理。
-        #[cfg(test)]
-        {
+        // 同上：测试环境不触碰真实系统代理。
+        // 这里同样必须用运行期判断，否则 air-ui 测试会绕过守卫（见 apply_system_proxy 的说明）。
+        if crate::test_environment::is_test_environment() {
             return;
         }
 
-        #[cfg(not(test))]
         {
             let running = matches!(self.snapshots.snapshot().runtime, RuntimeStatus::Running);
             let desired = self.desired_system_proxy_server();

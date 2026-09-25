@@ -35,6 +35,7 @@ air-ui = { path = "crates/air-ui" }
 anyhow = "1"
 async-trait = "0.1"
 directories = "6"
+dunce = "1"
 futures = "0.3"
 gpui = { git = "https://github.com/zed-industries/zed", package = "gpui" }
 gpui-component = { git = "https://github.com/longbridge/gpui-component.git", rev = "196b9259b562c26be97c92f88c798bbeefa9cb3d", package = "gpui-component", default-features = false, features = ["tree-sitter-yaml", "tree-sitter-javascript"] }

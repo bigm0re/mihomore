@@ -66,16 +66,16 @@ impl AppDirRoots {
         mode: PathMode,
     ) -> Self {
         Self {
-            config_dir: config_dir.into(),
-            data_dir: data_dir.into(),
-            cache_dir: cache_dir.into(),
+            config_dir: simplify_path(&config_dir.into()),
+            data_dir: simplify_path(&data_dir.into()),
+            cache_dir: simplify_path(&cache_dir.into()),
             mode,
         }
     }
 
     /// 便携布局：`<base>/config`、`<base>/data`、`<base>/cache`。
     pub fn portable(base_dir: impl Into<PathBuf>) -> Self {
-        let base = base_dir.into();
+        let base = simplify_path(&base_dir.into());
         Self {
             config_dir: base.join(PORTABLE_CONFIG_DIR),
             data_dir: base.join(PORTABLE_DATA_DIR),
@@ -147,6 +147,19 @@ impl AppDirRoots {
     }
 }
 
+/// 去掉 Windows verbatim（`\\?\`）前缀。
+///
+/// 这类路径会**关闭** Windows 的路径规范化：正斜杠不再被当作分隔符，`.`/`..` 也不再解析。
+/// 后果是真实的：mihomo（Go）内部用 `filepath.Join(dir, "cache.db")` 拼缓存路径，
+/// 若 `dir` 带 verbatim 前缀，得到的就是 `\\?\D:\...\core/cache.db`，
+/// 该文件打不开 → mihomo 无法持久化用户选择的节点 → 重启后回退到第一个节点。
+///
+/// 因此在所有目录进入应用之前统一剥离该前缀，而不是在各个调用点各自处理。
+/// 非 Windows 平台与不带前缀的路径原样返回。
+pub fn simplify_path(path: &Path) -> PathBuf {
+    dunce::simplified(path).to_path_buf()
+}
+
 /// 读取 `MIHOMORE_HOME` 覆盖值；空白值视为未设置。
 fn portable_home_override() -> Option<PathBuf> {
     let raw = std::env::var_os(PORTABLE_HOME_ENV)?;
@@ -160,8 +173,10 @@ fn portable_home_override() -> Option<PathBuf> {
 /// 当前可执行文件所在目录。
 fn executable_dir() -> Option<PathBuf> {
     let exe = std::env::current_exe().ok()?;
-    // Windows 上 current_exe 可能返回 `\\?\` 前缀路径；去掉后便于展示与拼接。
-    let exe = exe.canonicalize().unwrap_or(exe);
+    // Windows 上 std 的 `canonicalize` 会**加上** `\\?\` verbatim 前缀（不是去掉）。
+    // 该前缀一旦下传给 mihomo 就会破坏其内部路径拼接，因此这里用 dunce 解析符号链接，
+    // 同时保证不引入 verbatim 前缀。
+    let exe = dunce::canonicalize(&exe).unwrap_or(exe);
     exe.parent().map(Path::to_path_buf)
 }
 
@@ -224,5 +239,67 @@ mod tests {
         // 系统布局下三类目录不应互相嵌套，否则便携回退会覆盖用户配置。
         assert_ne!(roots.config_dir, roots.data_dir);
         assert_ne!(roots.data_dir, roots.cache_dir);
+    }
+
+    /// 回归测试：verbatim 前缀会让 mihomo 无法创建 `cache.db`，
+    /// 导致用户选择的节点无法持久化（重启后回退到第一个节点）。
+    #[test]
+    fn verbatim_prefix_is_stripped_from_resolved_roots() {
+        let raw = PathBuf::from(r"\\?\D:\mihomore");
+
+        let portable = AppDirRoots::portable(raw.clone());
+        let from_base = AppDirRoots::from_base_dirs(
+            raw.join("config"),
+            raw.join("data"),
+            raw.join("cache"),
+            PathMode::Portable,
+        );
+
+        for roots in [&portable, &from_base] {
+            for dir in [&roots.config_dir, &roots.data_dir, &roots.cache_dir] {
+                let text = dir.to_string_lossy();
+                assert!(
+                    !text.starts_with(r"\\?\"),
+                    "目录仍带 verbatim 前缀，会让 mihomo 无法写 cache.db: {text}"
+                );
+                assert!(
+                    !text.contains('/'),
+                    "剥离前缀后不应出现正斜杠（mihomo 内部拼接会出问题）: {text}"
+                );
+            }
+        }
+
+        // 前缀被去掉，但实际目录语义必须保持不变。
+        assert_eq!(portable.config_dir, PathBuf::from(r"D:\mihomore\config"));
+        assert_eq!(portable.cache_dir, PathBuf::from(r"D:\mihomore\cache"));
+    }
+
+    #[test]
+    fn simplify_path_keeps_ordinary_paths_unchanged() {
+        let plain = PathBuf::from(r"D:\mihomore\cache");
+
+        assert_eq!(simplify_path(&plain), plain);
+    }
+
+    /// 直接验证真实的 `executable_dir()`：它在 Windows 上会对 `current_exe()` 做解析，
+    /// 这是 verbatim 前缀最容易泄漏进来的入口。
+    #[test]
+    fn executable_dir_never_yields_a_verbatim_prefix() {
+        let dir = executable_dir().expect("current_exe should resolve during tests");
+        let text = dir.to_string_lossy();
+
+        assert!(
+            !text.starts_with(r"\\?\"),
+            "executable_dir 返回了 verbatim 前缀路径，会让 mihomo 无法写 cache.db: {text}"
+        );
+
+        // 便携根目录下派生的 cores_dir 就是最终传给 mihomo 的 `-d`，同样不能带前缀。
+        let roots = AppDirRoots::portable(&dir);
+        let cores_dir = roots.cache_dir.join("core");
+        assert!(
+            !cores_dir.to_string_lossy().starts_with(r"\\?\"),
+            "cores_dir 带 verbatim 前缀: {}",
+            cores_dir.display()
+        );
     }
 }

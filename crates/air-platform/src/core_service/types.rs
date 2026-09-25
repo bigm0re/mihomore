@@ -45,12 +45,17 @@ pub struct CoreServicePaths {
 
 impl CoreServicePaths {
     pub fn from_base_dirs(config_dir: &Path, data_dir: &Path, cache_dir: &Path) -> Self {
+        // 与 AppPaths 一致：剥离 Windows verbatim 前缀，否则内核服务模式下 mihomo
+        // 同样无法写 `cache.db`，用户选择的节点不能持久化。
+        let config_dir = air_paths::simplify_path(config_dir);
+        let data_dir = air_paths::simplify_path(data_dir);
+        let cache_dir = air_paths::simplify_path(cache_dir);
         Self {
-            config_dir: config_dir.to_path_buf(),
-            data_dir: data_dir.to_path_buf(),
-            cache_dir: cache_dir.to_path_buf(),
             cores_dir: cache_dir.join("core"),
             logs_dir: data_dir.join("logs"),
+            config_dir,
+            data_dir,
+            cache_dir,
         }
     }
 
@@ -75,6 +80,31 @@ impl CoreServicePaths {
             std::fs::create_dir_all(dir).map_err(air_error::StorageError::Io)?;
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 回归测试：内核服务模式下 `cores_dir` 同样会成为 mihomo 的 `-d`，
+    /// 带 verbatim 前缀时无法写 `cache.db`，用户选择的节点不能持久化。
+    #[test]
+    fn verbatim_prefix_never_reaches_the_service_core_working_dir() {
+        let raw = Path::new(r"\\?\D:\mihomore");
+
+        let paths = CoreServicePaths::from_base_dirs(
+            &raw.join("config"),
+            &raw.join("data"),
+            &raw.join("cache"),
+        );
+
+        for dir in [&paths.cores_dir, &paths.config_dir, &paths.logs_dir] {
+            let text = dir.to_string_lossy();
+            assert!(!text.starts_with(r"\\?\"), "仍带 verbatim 前缀: {text}");
+            assert!(!text.contains('/'), "不应出现正斜杠: {text}");
+        }
+        assert_eq!(paths.cores_dir, PathBuf::from(r"D:\mihomore\cache\core"));
     }
 }
 

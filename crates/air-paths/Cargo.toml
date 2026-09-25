@@ -10,6 +10,7 @@ publish = false
 [dependencies]
 air-error.workspace = true
 directories.workspace = true
+dunce.workspace = true
 tracing.workspace = true
 
 [dev-dependencies]

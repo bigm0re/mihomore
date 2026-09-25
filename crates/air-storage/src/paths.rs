@@ -1,7 +1,7 @@
 use std::path::{Path, PathBuf};
 
 use air_error::{AppResult, StorageError};
-use air_paths::{AppDirRoots, PathMode};
+use air_paths::{AppDirRoots, PathMode, simplify_path};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct AppPaths {
@@ -38,15 +38,20 @@ impl AppPaths {
     }
 
     pub fn from_base_dirs(config_dir: &Path, data_dir: &Path, cache_dir: &Path) -> Self {
+        // 统一剥离 Windows verbatim 前缀：该前缀会关闭路径规范化，使 mihomo 无法拼接出
+        // 可用的缓存路径（`cache.db` 打不开 → 用户选择的节点无法持久化），因此所有入口都要净化。
+        let config_dir = simplify_path(config_dir);
+        let data_dir = simplify_path(data_dir);
+        let cache_dir = simplify_path(cache_dir);
         // Windows/macOS/Linux 的系统目录不同，但业务层只依赖这些语义化子目录。
         Self {
-            config_dir: config_dir.to_path_buf(),
-            data_dir: data_dir.to_path_buf(),
-            cache_dir: cache_dir.to_path_buf(),
             subscription_cache_dir: config_dir.join("subscriptions"),
             cores_dir: cache_dir.join("core"),
             logs_dir: data_dir.join("logs"),
             backups_dir: data_dir.join("backups"),
+            config_dir,
+            data_dir,
+            cache_dir,
             mode: PathMode::System,
         }
     }
@@ -101,6 +106,24 @@ mod tests {
         assert!(paths.is_portable());
         assert_eq!(paths.config_dir, PathBuf::from("/opt/mihomore/config"));
         assert_eq!(paths.cores_dir, PathBuf::from("/opt/mihomore/cache/core"));
+    }
+
+    /// 回归测试：`cores_dir` 是最终传给 mihomo `-d` 的目录。
+    /// 若它带 Windows verbatim 前缀，mihomo 就拼不出可用的 `cache.db` 路径，
+    /// 用户选择的节点无法持久化（重启后回退到第一个节点）。
+    #[test]
+    fn verbatim_prefix_never_reaches_the_core_working_dir() {
+        let raw = Path::new(r"\\?\D:\mihomore");
+
+        let paths =
+            AppPaths::from_base_dirs(&raw.join("config"), &raw.join("data"), &raw.join("cache"));
+
+        for dir in [&paths.cores_dir, &paths.config_dir, &paths.logs_dir] {
+            let text = dir.to_string_lossy();
+            assert!(!text.starts_with(r"\\?\"), "仍带 verbatim 前缀: {text}");
+            assert!(!text.contains('/'), "不应出现正斜杠: {text}");
+        }
+        assert_eq!(paths.cores_dir, PathBuf::from(r"D:\mihomore\cache\core"));
     }
 
     #[test]

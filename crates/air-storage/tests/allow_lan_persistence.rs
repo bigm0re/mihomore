@@ -56,9 +56,10 @@ fn explicit_allow_lan_true_reaches_runtime_config() {
     );
 }
 
-/// 内置默认配置目前不含 allow-lan —— 记录当前事实，便于判断「回落」的起点。
+/// 内置默认配置必须显式声明 allow-lan，否则 mihomo 会用自己的默认值，
+/// 让「本机软件配置」失去权威性（这正是「重启后回落」的根源）。
 #[test]
-fn default_config_does_not_pin_allow_lan() {
+fn default_config_pins_allow_lan_explicitly() {
     let temp = tempfile::tempdir().expect("临时目录应创建成功");
     let paths = AppPaths::from_base_dirs(
         &temp.path().join("config"),
@@ -69,20 +70,20 @@ fn default_config_does_not_pin_allow_lan() {
     let store = CoreConfigStore::new(paths);
 
     let doc = store.load_user_config().expect("应能加载内置默认配置");
+    assert_eq!(
+        doc.typed.global.allow_lan,
+        Some(false),
+        "默认配置必须显式写 allow-lan: false，而不是留给 mihomo 默认值"
+    );
+
     let runtime_path = store
         .write_runtime_config(&doc.typed, &[])
         .expect("运行配置应能写出");
     let runtime = fs::read_to_string(&runtime_path).expect("应可读取");
 
-    println!(
-        "内置默认配置 allow_lan = {:?}；运行配置含 allow-lan = {}",
-        doc.typed.global.allow_lan,
-        runtime.contains("allow-lan")
+    assert!(
+        runtime.contains("allow-lan: false"),
+        "运行配置必须携带显式的 allow-lan，否则内核重启会回落\n{runtime}"
     );
-    // 不断言具体值：这里只是把「默认不写 allow-lan」这一事实显式化，
-    // 因为 mihomo 会因此回落到 false。
-    assert_eq!(
-        doc.typed.global.allow_lan, None,
-        "默认配置当前不指定 allow-lan"
-    );
+    assert!(runtime.contains("bind-address"), "{runtime}");
 }

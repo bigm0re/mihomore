@@ -40,7 +40,7 @@ dependencies = [
 
 [[package]]
 name = "air-app"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "air-config",
  "air-error",
@@ -63,7 +63,7 @@ dependencies = [
 
 [[package]]
 name = "air-config"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "air-error",
  "air-telemetry",
@@ -78,7 +78,7 @@ dependencies = [
 
 [[package]]
 name = "air-desktop"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "air-app",
  "air-error",
@@ -92,7 +92,7 @@ dependencies = [
 
 [[package]]
 name = "air-error"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "serde_json",
  "serde_yaml",
@@ -101,7 +101,7 @@ dependencies = [
 
 [[package]]
 name = "air-mihomo"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "air-config",
  "air-error",
@@ -128,7 +128,7 @@ dependencies = [
 
 [[package]]
 name = "air-paths"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "air-error",
  "directories",
@@ -139,7 +139,7 @@ dependencies = [
 
 [[package]]
 name = "air-platform"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "air-error",
  "air-paths",
@@ -156,7 +156,7 @@ dependencies = [
 
 [[package]]
 name = "air-settings"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "air-error",
  "serde",
@@ -166,7 +166,7 @@ dependencies = [
 
 [[package]]
 name = "air-storage"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "air-config",
  "air-error",
@@ -185,7 +185,7 @@ dependencies = [
 
 [[package]]
 name = "air-telemetry"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "air-error",
  "air-paths",
@@ -201,7 +201,7 @@ dependencies = [
 
 [[package]]
 name = "air-ui"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "air-app",
  "air-config",

@@ -15,6 +15,12 @@ pub const CORE_COMMON_CONFIG_PATH: &str = "core.common.config.yaml";
 pub const CORE_RUNTIME_CONFIG_PATH: &str = "core.runtime.config.yaml";
 
 const DEFAULT_CORE_CONFIG: &str = r#"mixed-port: 7890
+# allow-lan / bind-address 必须显式写出。
+# mihomo 的 allow-lan 默认是 false 且只认配置文件：配置里没有该字段时，
+# 内核重启会回落到 false。显式声明让本机软件配置成为唯一权威，
+# 避免出现“运行时开着、重启就没了”的隐式状态。
+allow-lan: false
+bind-address: "*"
 external-controller: 127.0.0.1:9090
 dns:
   enable: true

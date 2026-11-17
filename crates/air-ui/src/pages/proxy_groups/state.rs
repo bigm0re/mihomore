@@ -609,7 +609,15 @@ impl GroupPageState {
                 GroupListItem {
                     name: name.clone(),
                     kind: proxy_group_type_display_label(raw_kind).to_string(),
-                    document_index: runtime_base_index + runtime_index,
+                    // 必须优先使用 `runtime_order`（即 projection.states 从订阅/配置文档中继承的原始顺序）。
+                    // 原代码直接使用 `runtime_base_index + runtime_index`，而 `runtime_index` 是
+                    // BTreeMap 键名（字符串 Unicode 码点）的字典序迭代索引，导致所有运行态代理组
+                    // （包括订阅注入的所有组）在没有本地 collection 匹配时被强制打乱成字典序。
+                    document_index: self
+                        .runtime_order
+                        .get(name)
+                        .copied()
+                        .unwrap_or(runtime_base_index + runtime_index),
                     current: state.selected.clone().unwrap_or_else(|| "-".to_string()),
                     member_count,
                     total_member_count: state.members.len(),

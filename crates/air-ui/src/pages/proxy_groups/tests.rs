@@ -130,6 +130,54 @@ proxy-groups:
     assert_eq!(names, vec!["auto-first", "proxy-second"]);
 }
 
+/// 回归测试：解决「左侧服务排序没有按照订阅文档排序，而是变成 Unicode 字典序」的缺陷。
+///
+/// 故障场景：真实软件从托盘或其它路由切到代理组页面时，`GroupPageState` 以 `empty()` 启动，
+/// 订阅注入的所有代理组都会进入 `runtime_only_items` 分支。原代码使用了
+/// `self.runtime.iter().enumerate()` 的迭代索引，导致 BTreeMap 的键名字典序（如按
+/// Emoji 码点 `Ⓜ️` < `⚡` < `🚀`）覆盖了 `projection.states` 中来自订阅的真实文档顺序。
+#[test]
+fn view_model_preserves_subscription_group_order_when_collection_is_empty() {
+    let mut state = GroupPageState::empty();
+    // 故意使用反字典序的组名（Emoji 码点：🚀 0x1F680 > ⚡ 0x26A1 > Ⓜ️ 0x24C2）。
+    // 若退化为 BTreeMap 字典序，Ⓜ️ 就会被错误排到最前面（正是用户截图中的现象）。
+    let subscription_order = vec!["🚀 节点选择", "⚡ 自动选择", "Ⓜ️ 微软服务"];
+
+    state.apply_runtime_projection(ProxyGroupRuntimeProjection {
+        states: subscription_order
+            .iter()
+            .map(|name| ProxyGroupSelectionState {
+                group_name: name.to_string(),
+                configured_kind: ProxyGroupKind::Select,
+                api_kind: Some("Selector".to_string()),
+                selected: Some("DIRECT".to_string()),
+                members: vec![ProxyGroupRuntimeMember {
+                    name: "DIRECT".to_string(),
+                    source: ProxyGroupMemberSource::BuiltInPolicy,
+                    protocol: None,
+                    selected: true,
+                    configured: true,
+                    index_in_api: 0,
+                    history: Vec::new(),
+                }],
+                history: Vec::new(),
+            })
+            .collect(),
+    });
+
+    let model = state.view_model();
+    let names = model
+        .items
+        .iter()
+        .map(|item| item.name.as_str())
+        .collect::<Vec<_>>();
+
+    assert_eq!(
+        names, subscription_order,
+        "代理组列表必须忠实保留订阅文档中定义的顺序，绝不能退化为字典序"
+    );
+}
+
 #[test]
 fn proxy_type_labels_match_mihomo_api_and_config_names() {
     let pairs = [
